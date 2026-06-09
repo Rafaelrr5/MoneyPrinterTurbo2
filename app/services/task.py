@@ -461,7 +461,15 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
             progress=100,
             materials=downloaded_videos,
         )
-        return {"materials": downloaded_videos}
+        # 额外返回续跑所需上下文，供 WebUI 预览通过后直接收尾，无需重读磁盘。
+        return {
+            "materials": downloaded_videos,
+            "audio_file": audio_file,
+            "subtitle_path": subtitle_path,
+            "script": video_script,
+            "terms": video_terms,
+            "audio_duration": audio_duration,
+        }
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=50)
 

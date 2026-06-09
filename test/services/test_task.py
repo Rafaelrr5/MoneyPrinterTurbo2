@@ -107,6 +107,33 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(result["videos"], ["/t/final-1.mp4"])
         self.assertEqual(result["combined_videos"], ["/t/combined-1.mp4"])
 
+    def test_stop_at_materials_returns_resume_context(self):
+        """stop_at='materials' 需返回 WebUI 续跑所需的全部上下文。"""
+        params = VideoParams(
+            video_subject="x",
+            video_source="pexels",
+            video_aspect="9:16",
+            video_concat_mode="random",
+            video_transition_mode="None",
+            video_clip_duration=3,
+            video_count=1,
+            n_threads=2,
+        )
+        with patch.object(tm, "generate_script", return_value="script text"), \
+             patch.object(tm, "generate_terms", return_value=["t1", "t2"]), \
+             patch.object(tm, "generate_audio", return_value=("/a/audio.mp3", 12, object())), \
+             patch.object(tm, "generate_subtitle", return_value="/a/subtitle.srt"), \
+             patch.object(tm, "get_video_materials", return_value=["/v/1.mp4"]), \
+             patch.object(tm, "save_script_data"):
+            res = tm.start("ctx-task", params, stop_at="materials")
+
+        self.assertEqual(res["materials"], ["/v/1.mp4"])
+        self.assertEqual(res["audio_file"], "/a/audio.mp3")
+        self.assertEqual(res["subtitle_path"], "/a/subtitle.srt")
+        self.assertEqual(res["script"], "script text")
+        self.assertEqual(res["terms"], ["t1", "t2"])
+        self.assertEqual(res["audio_duration"], 12)
+
     def test_task_local_materials(self):
         task_id = "00000000-0000-0000-0000-000000000000"
         video_materials=[]
