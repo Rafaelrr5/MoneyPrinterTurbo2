@@ -28,3 +28,6 @@ TASK_STATE_PROCESSING = 4
 
 FILE_TYPE_VIDEOS = ["mp4", "mov", "mkv", "webm"]
 FILE_TYPE_IMAGES = ["jpg", "jpeg", "png", "bmp"]
+
+# 预览片段时长（秒）：完整渲染前先产出这么长的样片供用户确认。
+PREVIEW_DURATION = 10
