@@ -1365,6 +1365,38 @@ def _build_subtitle_items_from_legacy_submaker(
     return sub_items
 
 
+def _write_word_timings_sidecar(sub_maker: SubMaker, subtitle_file: str):
+    """把 Edge TTS 的词级时间戳写到 SRT 旁挂的 .words.json，供卡拉OK逐字高亮使用。
+
+    只有 edge_tts 7.x 的 `cues` 提供逐词时间；legacy(subs/offset) 多为句级，这里跳过，
+    视频渲染层会在缺失时自动回退到比例内插。
+    """
+    cues = getattr(sub_maker, "cues", None)
+    if not cues:
+        return
+    words = []
+    for cue in cues:
+        content = unescape(cue.content) if cue.content else ""
+        if not content.strip():
+            continue
+        words.append(
+            {
+                "text": content,
+                "start": cue.start.total_seconds(),
+                "end": cue.end.total_seconds(),
+            }
+        )
+    if not words:
+        return
+    words_file = os.path.splitext(subtitle_file)[0] + ".words.json"
+    try:
+        with open(words_file, "w", encoding="utf-8") as f:
+            json.dump({"words": words}, f, ensure_ascii=False)
+        logger.info(f"word timings written: {words_file}")
+    except Exception as e:
+        logger.warning(f"failed to write word timings: {str(e)}")
+
+
 def create_subtitle(sub_maker: SubMaker, text: str, subtitle_file: str):
     """
     优化字幕文件
@@ -1389,6 +1421,8 @@ def create_subtitle(sub_maker: SubMaker, text: str, subtitle_file: str):
             return
 
         _write_subtitle_items(sub_items, subtitle_file)
+        # 旁挂真实逐词时间戳，供视频渲染做卡拉OK逐字高亮。
+        _write_word_timings_sidecar(sub_maker, subtitle_file)
     except Exception as e:
         logger.error(f"failed, error: {str(e)}")
 

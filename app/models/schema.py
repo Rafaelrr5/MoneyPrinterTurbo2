@@ -101,6 +101,8 @@ class VideoParams(BaseModel):
     text_fore_color: Optional[str] = "#FFFFFF"
     text_background_color: Union[bool, str] = True
     rounded_subtitle_background: bool = False
+    subtitle_highlight_enabled: bool = False  # 卡拉OK逐字高亮 (karaoke word-by-word highlight)
+    subtitle_highlight_color: Optional[str] = "#FFFF00"  # 高亮词颜色 (active word color)
 
     font_size: int = 60
     stroke_color: Optional[str] = "#000000"
@@ -125,6 +127,8 @@ class SubtitleRequest(BaseModel):
     text_fore_color: Optional[str] = "#FFFFFF"
     text_background_color: Union[bool, str] = True
     rounded_subtitle_background: bool = False
+    subtitle_highlight_enabled: bool = False
+    subtitle_highlight_color: Optional[str] = "#FFFF00"
     font_size: int = 60
     stroke_color: Optional[str] = "#000000"
     stroke_width: float = 1.5

@@ -323,6 +323,11 @@ hide_log = false
 # Custom position as percentage from top (0-100), only effective when subtitle_position = "custom"
 # custom_position = 70.0
 
+# 卡拉OK逐字高亮：朗读到的词变色并放大 (Karaoke word-by-word highlight). Disabled by default.
+# subtitle_highlight_enabled = false
+# 高亮颜色 (Highlight color), e.g. "#FFFF00"
+# subtitle_highlight_color = "#FFFF00"
+
 ########## Upload-Post (Cross-post to TikTok/Instagram)
 # Upload-Post allows you to automatically cross-post generated videos to TikTok and Instagram.
 # Visit https://upload-post.com to create an account and get your API key.

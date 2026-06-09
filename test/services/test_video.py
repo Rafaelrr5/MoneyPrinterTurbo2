@@ -562,5 +562,68 @@ class TestVideoService(unittest.TestCase):
         finally:
             clip.close()
 
+class TestKaraokeWordTimings(unittest.TestCase):
+    """卡拉OK逐字高亮的时间分配是纯函数，单独覆盖，不触发任何渲染。"""
+
+    def test_distribute_latin_is_proportional_contiguous_and_clamped(self):
+        result = vd.distribute_word_timings("hello world foo", 0.0, 6.0)
+        tokens = [t for t, _, _ in result]
+        self.assertEqual(tokens, ["hello", "world", "foo"])
+        # 首词从行首开始，末词对齐到行尾（避免浮点越界）。
+        self.assertAlmostEqual(result[0][1], 0.0)
+        self.assertAlmostEqual(result[-1][2], 6.0)
+        # 相邻 token 时间连续、单调不减。
+        for i in range(len(result) - 1):
+            self.assertAlmostEqual(result[i][2], result[i + 1][1])
+            self.assertLessEqual(result[i][1], result[i][2])
+        # 按字符长度比例：hello(5)/world(5)/foo(3)，total=13。
+        self.assertAlmostEqual(result[0][2], 6.0 * 5 / 13)
+
+    def test_distribute_cjk_splits_per_character(self):
+        result = vd.distribute_word_timings("中文字幕", 0.0, 4.0)
+        self.assertEqual([t for t, _, _ in result], ["中", "文", "字", "幕"])
+        self.assertAlmostEqual(result[0][1], 0.0)
+        self.assertAlmostEqual(result[-1][2], 4.0)
+        for _tok, ts, te in result:
+            self.assertAlmostEqual(te - ts, 1.0)
+
+    def test_distribute_single_token_spans_whole_interval(self):
+        self.assertEqual(
+            vd.distribute_word_timings("hello", 1.0, 3.0), [("hello", 1.0, 3.0)]
+        )
+
+    def test_distribute_blank_returns_empty(self):
+        self.assertEqual(vd.distribute_word_timings("   ", 0.0, 2.0), [])
+
+    def test_distribute_degenerate_interval_collapses_to_start(self):
+        # end <= start：每个 token 退化为零时长，渲染层会跳过这些叠层。
+        self.assertEqual(
+            vd.distribute_word_timings("a", 5.0, 5.0), [("a", 5.0, 5.0)]
+        )
+
+    def test_resolve_uses_real_timings_when_count_matches(self):
+        flat_words = [
+            {"text": "hello", "start": 0.1, "end": 0.5},
+            {"text": "world", "start": 0.6, "end": 1.8},
+        ]
+        result = vd.resolve_word_timings("hello world", 0.0, 2.0, flat_words)
+        self.assertEqual(
+            result, [("hello", 0.1, 0.5), ("world", 0.6, 1.8)]
+        )
+
+    def test_resolve_falls_back_when_count_mismatches(self):
+        # 窗口内只有 1 个真实词，但该行有 2 个 token → 回退比例内插。
+        flat_words = [{"text": "hello", "start": 0.1, "end": 0.5}]
+        result = vd.resolve_word_timings("hello world", 0.0, 2.0, flat_words)
+        self.assertEqual([t for t, _, _ in result], ["hello", "world"])
+        self.assertAlmostEqual(result[0][1], 0.0)
+        self.assertAlmostEqual(result[-1][2], 2.0)
+
+    def test_resolve_falls_back_when_no_word_timings(self):
+        result = vd.resolve_word_timings("hello world", 0.0, 2.0, None)
+        self.assertEqual([t for t, _, _ in result], ["hello", "world"])
+        self.assertAlmostEqual(result[-1][2], 2.0)
+
+
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()

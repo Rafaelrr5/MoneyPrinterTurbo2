@@ -1,6 +1,7 @@
 import glob
 import itertools
 import io
+import json
 import os
 import random
 import gc
@@ -793,6 +794,297 @@ def _rounded_subtitle_background_clip(
     return ImageClip(np.array(img), transparent=True)
 
 
+# 卡拉OK逐字高亮：高亮词在原字号基础上放大，制造“弹跳”效果。
+HIGHLIGHT_SCALE = 1.15
+
+
+def _is_cjk_char(ch):
+    # 中日韩文字无空格书写、逐字朗读，需按字高亮；拉丁文按词高亮。
+    code = ord(ch)
+    return (
+        0x4E00 <= code <= 0x9FFF  # CJK 统一表意文字
+        or 0x3400 <= code <= 0x4DBF  # CJK 扩展 A
+        or 0x3040 <= code <= 0x30FF  # 平假名 + 片假名
+        or 0xAC00 <= code <= 0xD7A3  # 谚文音节
+        or 0xF900 <= code <= 0xFAFF  # CJK 兼容表意文字
+    )
+
+
+def _tokenize_subtitle_line(text):
+    """分词：先按空白切，块内含 CJK 的再逐字拆，纯拉丁词保持整词。
+
+    例：``"Hello 世界"`` → ``["Hello", "世", "界"]``；``"hello"`` → ``["hello"]``。
+    """
+    if not text:
+        return []
+    tokens = []
+    for chunk in text.split():
+        buf = ""
+        for ch in chunk:
+            if _is_cjk_char(ch):
+                if buf:
+                    tokens.append(buf)
+                    buf = ""
+                tokens.append(ch)
+            else:
+                buf += ch
+        if buf:
+            tokens.append(buf)
+    return tokens
+
+
+def distribute_word_timings(text, start, end):
+    """按 token 字符长度比例，把一行字幕的 [start, end] 均分到各 token。
+
+    纯函数，不依赖 MoviePy/PIL，便于单元测试。当真实逐词时间戳不可用时（gemini 等
+    只有句级时间的 provider），渲染阶段用它把高亮平滑地铺满整行。
+    返回 [(token, t_start, t_end), ...]。
+    """
+    tokens = _tokenize_subtitle_line(text)
+    if not tokens:
+        return []
+    if start is None or end is None or end <= start:
+        return [(t, start, start) for t in tokens]
+
+    weights = [max(1, len(t)) for t in tokens]
+    total = sum(weights)
+    span = end - start
+    result = []
+    cursor = start
+    for i, (tok, w) in enumerate(zip(tokens, weights)):
+        # 最后一个 token 直接对齐到 end，避免浮点累积误差越界到下一行。
+        t_end = end if i == len(tokens) - 1 else cursor + span * (w / total)
+        result.append((tok, cursor, t_end))
+        cursor = t_end
+    return result
+
+
+def resolve_word_timings(line_text, line_start, line_end, flat_words, tol=0.05):
+    """优先使用真实逐词时间戳（subtitle.words.json），数量对不上时回退到比例内插。
+
+    flat_words 为按时间排序的 [{"text","start","end"}, ...]（来自 Edge/Whisper）。
+    """
+    tokens = _tokenize_subtitle_line(line_text)
+    if not tokens:
+        return []
+    if flat_words:
+        windowed = [
+            w
+            for w in flat_words
+            if w.get("start") is not None
+            and float(w["start"]) >= line_start - tol
+            and float(w["start"]) < line_end + tol
+        ]
+        if len(windowed) == len(tokens):
+            return [
+                (tok, float(w["start"]), float(w["end"]))
+                for tok, w in zip(tokens, windowed)
+            ]
+    return distribute_word_timings(line_text, line_start, line_end)
+
+
+def _load_word_timings(subtitle_path):
+    """读取 SRT 旁挂的逐词时间戳文件；缺失或解析失败时返回 None（渲染层回退内插）。"""
+    if not subtitle_path:
+        return None
+    words_path = os.path.splitext(subtitle_path)[0] + ".words.json"
+    if not os.path.exists(words_path):
+        return None
+    try:
+        with open(words_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        logger.warning(f"failed to read word timings {words_path}: {str(exc)}")
+        return None
+    words = data.get("words") if isinstance(data, dict) else None
+    return words or None
+
+
+def _build_karaoke_clips(
+    phrase,
+    line_start,
+    line_end,
+    *,
+    font_path,
+    font_size,
+    max_width,
+    video_width,
+    video_height,
+    fore_color,
+    highlight_color,
+    stroke_color,
+    stroke_width,
+    bg_color,
+    rounded_bg,
+    subtitle_position,
+    custom_position,
+    flat_words,
+):
+    """逐字卡拉OK字幕：底层整句常色 + 每个词独立的放大高亮叠层。
+
+    两层都用 PIL 渲染、共用同一套排版计算，保证叠层与底层逐词像素对齐。
+    返回一组带时间轴和绝对位置的 ImageClip（底层 1 个 + 每词 1 个）。
+    """
+    font_size = int(font_size)
+    stroke_width = int(stroke_width)
+    font = ImageFont.truetype(font_path, font_size)
+
+    wrapped_txt, txt_height = wrap_text(
+        phrase, max_width=max_width, font=font_path, fontsize=font_size
+    )
+    interline = int(font_size * 0.25)
+    line_count = wrapped_txt.count("\n") + 1
+    vertical_padding = int(font_size * 0.35)
+    clip_h = int(txt_height + vertical_padding + (interline * line_count))
+    lines = wrapped_txt.split("\n")
+
+    # 字幕框宽度：圆角背景贴合文字宽度，否则沿用 90% 视频宽度（与静态路径一致）。
+    if rounded_bg and bg_color:
+        try:
+            text_w = max(int(font.getlength(ln)) for ln in lines if ln)
+        except ValueError:
+            text_w = int(max_width)
+        pad_x = int(font_size * 0.6)
+        box_w = max(1, min(int(max_width), text_w + 2 * pad_x))
+    else:
+        box_w = int(max_width)
+
+    fore_rgb = _hex_to_rgb(fore_color)
+    highlight_rgb = _hex_to_rgb(highlight_color)
+    stroke_rgb = _hex_to_rgb(stroke_color)
+
+    ascent, descent = font.getmetrics()
+    line_h = ascent + descent
+    block_h = line_count * line_h + (line_count - 1) * interline
+    y0 = (clip_h - block_h) / 2
+
+    # —— 底层：整句常色（含可选背景与描边） ——
+    base_img = Image.new("RGBA", (box_w, clip_h), (0, 0, 0, 0))
+    base_draw = ImageDraw.Draw(base_img)
+    if bg_color:
+        bg_rgb = _hex_to_rgb(bg_color)
+        if rounded_bg:
+            radius = max(8, int(font_size * 0.4))
+            base_draw.rounded_rectangle(
+                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
+                radius=radius,
+                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 140),
+            )
+        else:
+            base_draw.rectangle(
+                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
+                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 255),
+            )
+
+    line_geom = []  # 每个可视行的 (x_start, line_top)
+    for li, line in enumerate(lines):
+        line_top = y0 + li * (line_h + interline)
+        line_w = font.getlength(line)
+        x_start = (box_w - line_w) / 2
+        line_geom.append((x_start, line_top))
+        base_draw.text(
+            (x_start, line_top),
+            line,
+            font=font,
+            fill=fore_rgb,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_rgb,
+            anchor="la",
+        )
+
+    # 绝对定位（与静态路径同口径，但需要数值，因为叠层要按词中心摆放）。
+    box_left = (video_width - box_w) / 2
+    if subtitle_position == "bottom":
+        box_top = video_height * 0.95 - clip_h
+    elif subtitle_position == "top":
+        box_top = video_height * 0.05
+    elif subtitle_position == "custom":
+        margin = 10
+        max_y = video_height - clip_h - margin
+        min_y = margin
+        box_top = (video_height - clip_h) * (custom_position / 100)
+        box_top = max(min_y, min(box_top, max_y))
+    else:  # center
+        box_top = (video_height - clip_h) / 2
+
+    duration = max(0.0, line_end - line_start)
+    base_arr = np.array(base_img)
+    del base_img
+    clips = [
+        ImageClip(base_arr, transparent=True)
+        .with_start(line_start)
+        .with_end(line_end)
+        .with_duration(duration)
+        .with_position((box_left, box_top))
+    ]
+
+    # —— 叠层：逐词放大高亮 ——
+    timings = resolve_word_timings(phrase, line_start, line_end, flat_words)
+
+    # 把整行 token 时间轴铺到换行后的可视 token 上（同一套分词，顺序一致）。
+    # prefix 直接取该行被绘制文本的真实子串，空格/CJK 一视同仁，x 测量更准。
+    visual_tokens = []  # (line_idx, token, prefix_on_line)
+    for li, line in enumerate(lines):
+        char_cursor = 0
+        for tok in _tokenize_subtitle_line(line):
+            idx = line.find(tok, char_cursor)
+            if idx < 0:
+                idx = char_cursor
+            visual_tokens.append((li, tok, line[:idx]))
+            char_cursor = idx + len(tok)
+
+    if len(visual_tokens) != len(timings):
+        # token 与时间轴对不上（极少见，如超长英文词被字符级拆分）：只保留底层，
+        # 不抛异常，保证渲染不中断。
+        logger.warning(
+            f"karaoke token/timing mismatch ({len(visual_tokens)} vs {len(timings)}), "
+            f"showing base line only: {str(phrase)[:30]}"
+        )
+        return clips
+
+    hl_font_size = max(1, int(round(font_size * HIGHLIGHT_SCALE)))
+    hl_font = ImageFont.truetype(font_path, hl_font_size)
+    hl_ascent, hl_descent = hl_font.getmetrics()
+
+    for (li, tok, prefix), (_t_tok, t_start, t_end) in zip(visual_tokens, timings):
+        if t_start is None or t_end is None or t_end <= t_start:
+            continue
+        x_start, line_top = line_geom[li]
+        tok_left = x_start + font.getlength(prefix)
+        tok_w = font.getlength(tok)
+        cx = tok_left + tok_w / 2  # 词中心（字幕框坐标系）
+        cy = line_top + line_h / 2
+
+        hl_w = hl_font.getlength(tok)
+        pad = stroke_width * 2 + 4
+        img_w = max(1, int(hl_w + pad * 2))
+        img_h = max(1, int((hl_ascent + hl_descent) + pad * 2))
+        ov = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+        ImageDraw.Draw(ov).text(
+            (img_w / 2, img_h / 2),
+            tok,
+            font=hl_font,
+            fill=highlight_rgb,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_rgb,
+            anchor="mm",
+        )
+        ov_arr = np.array(ov)
+        del ov
+        # 叠层中心对齐底层词中心 → 绝对左上角。
+        abs_x = box_left + cx - img_w / 2
+        abs_y = box_top + cy - img_h / 2
+        clips.append(
+            ImageClip(ov_arr, transparent=True)
+            .with_start(t_start)
+            .with_end(t_end)
+            .with_duration(t_end - t_start)
+            .with_position((abs_x, abs_y))
+        )
+
+    return clips
+
+
 def generate_video(
     video_path: str,
     audio_path: str,
@@ -824,6 +1116,11 @@ def generate_video(
 
         logger.info(f"  ⑤ font: {font_path}")
 
+    # 逐字高亮开启时，预读 SRT 旁挂的真实逐词时间戳；缺失则为 None，渲染层回退内插。
+    flat_words = None
+    if params.subtitle_enabled and getattr(params, "subtitle_highlight_enabled", False):
+        flat_words = _load_word_timings(subtitle_path)
+
     def resolve_subtitle_background_color():
         # 兼容历史参数：API 里 `text_background_color` 既可能是布尔值，
         # 也可能是实际颜色字符串。统一在这里归一化，避免把 True/False
@@ -837,6 +1134,28 @@ def generate_video(
         params.stroke_width = int(params.stroke_width)
         phrase = subtitle_item[1]
         max_width = video_width * 0.9
+        if getattr(params, "subtitle_highlight_enabled", False):
+            # 逐字卡拉OK路径：返回一组 ImageClip（底层 + 逐词高亮叠层）。
+            return _build_karaoke_clips(
+                phrase,
+                subtitle_item[0][0],
+                subtitle_item[0][1],
+                font_path=font_path,
+                font_size=params.font_size,
+                max_width=max_width,
+                video_width=video_width,
+                video_height=video_height,
+                fore_color=params.text_fore_color,
+                highlight_color=getattr(params, "subtitle_highlight_color", "#FFFF00")
+                or "#FFFF00",
+                stroke_color=params.stroke_color,
+                stroke_width=params.stroke_width,
+                bg_color=resolve_subtitle_background_color(),
+                rounded_bg=bool(getattr(params, "rounded_subtitle_background", False)),
+                subtitle_position=params.subtitle_position,
+                custom_position=params.custom_position,
+                flat_words=flat_words,
+            )
         wrapped_txt, txt_height = wrap_text(
             phrase, max_width=max_width, font=font_path, fontsize=params.font_size
         )
@@ -952,7 +1271,11 @@ def generate_video(
         text_clips = []
         for item in sub.subtitles:
             clip = create_text_clip(subtitle_item=item)
-            text_clips.append(clip)
+            # 卡拉OK路径返回一组 clip（底层 + 逐词叠层），静态路径返回单个 clip。
+            if isinstance(clip, list):
+                text_clips.extend(clip)
+            else:
+                text_clips.append(clip)
         video_clip = CompositeVideoClip([video_clip, *text_clips])
 
     bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)

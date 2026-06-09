@@ -65,6 +65,7 @@ def create(audio_file, subtitle_file: str = ""):
 
     start = timer()
     subtitles = []
+    word_timings = []  # 逐词时间戳，供卡拉OK高亮旁挂使用
 
     def recognized(seg_text, seg_start, seg_end):
         seg_text = seg_text.strip()
@@ -89,6 +90,11 @@ def create(audio_file, subtitle_file: str = ""):
         if segment.words:
             is_segmented = False
             for word in segment.words:
+                word_text = word.word.strip()
+                if word_text:
+                    word_timings.append(
+                        {"text": word_text, "start": word.start, "end": word.end}
+                    )
                 if not is_segmented:
                     seg_start = word.start
                     is_segmented = True
@@ -140,6 +146,17 @@ def create(audio_file, subtitle_file: str = ""):
     with open(subtitle_file, "w", encoding="utf-8") as f:
         f.write(sub)
     logger.info(f"subtitle file created: {subtitle_file}")
+
+    # 旁挂真实逐词时间戳（绝对秒），供视频渲染做卡拉OK逐字高亮。
+    # 时间戳是绝对值，即使后续 correct() 重写 SRT 行，渲染层按行 [start,end] 开窗仍有效。
+    if word_timings:
+        words_file = os.path.splitext(subtitle_file)[0] + ".words.json"
+        try:
+            with open(words_file, "w", encoding="utf-8") as f:
+                json.dump({"words": word_timings}, f, ensure_ascii=False)
+            logger.info(f"word timings written: {words_file}")
+        except Exception as e:
+            logger.warning(f"failed to write word timings: {str(e)}")
 
 
 def file_to_subtitles(filename):

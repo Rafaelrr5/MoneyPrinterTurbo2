@@ -1278,6 +1278,26 @@ with right_panel:
             config.ui["rounded_subtitle_background"] = (
                 params.rounded_subtitle_background
             )
+
+        # 卡拉OK逐字高亮：朗读到的词变色并放大。
+        highlight_cols = st.columns([0.4, 0.6])
+        saved_highlight_enabled = config.ui.get("subtitle_highlight_enabled", False)
+        with highlight_cols[0]:
+            params.subtitle_highlight_enabled = st.checkbox(
+                tr("Enable Karaoke Highlight"),
+                value=saved_highlight_enabled,
+                help=tr("Enable Karaoke Highlight Help"),
+            )
+        config.ui["subtitle_highlight_enabled"] = params.subtitle_highlight_enabled
+        if params.subtitle_highlight_enabled:
+            with highlight_cols[1]:
+                saved_highlight_color = config.ui.get(
+                    "subtitle_highlight_color", "#FFFF00"
+                )
+                params.subtitle_highlight_color = st.color_picker(
+                    tr("Karaoke Highlight Color"), saved_highlight_color
+                )
+                config.ui["subtitle_highlight_color"] = params.subtitle_highlight_color
     with st.expander(tr("Click to show API Key management"), expanded=False):
         st.subheader(tr("Manage Pexels and Pixabay API Keys"))
 
