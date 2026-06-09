@@ -336,6 +336,10 @@ api_key = ""
 # Whether to hide logs in the UI
 hide_log = false
 
+# 完整渲染前先生成约 10 秒样片并等待确认（默认开启）
+# WebUI: render a ~10s preview and require approval before the full render (default true)
+preview_before_render = true
+
 # 输入可见性设置 (Input visibility settings)
 # 由 WebUI 的 "Visibility Settings" 面板读写；也可手动编辑。
 # Read/written by the WebUI "Visibility Settings" panel; can also be edited by hand.
