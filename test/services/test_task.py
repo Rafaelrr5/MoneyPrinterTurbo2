@@ -45,6 +45,36 @@ class TestTaskService(unittest.TestCase):
             custom_system_prompt="Only write short narration.",
         )
     
+    def test_generate_preview_renders_truncated_clip(self):
+        """预览复用真实渲染路径：裁剪音频 -> 合成 -> 生成视频，返回 preview.mp4 路径。"""
+        params = VideoParams(
+            video_subject="x",
+            video_aspect="9:16",
+            video_concat_mode="random",
+            video_transition_mode="None",
+            video_clip_duration=3,
+            n_threads=2,
+        )
+        with patch.object(tm.video, "trim_audio") as trim, \
+             patch.object(tm.video, "combine_videos") as combine, \
+             patch.object(tm.video, "generate_video") as gen:
+            preview = tm.generate_preview(
+                task_id="preview-task",
+                params=params,
+                downloaded_videos=["/v/1.mp4", "/v/2.mp4"],
+                audio_file="/a/audio.mp3",
+                subtitle_path="/a/subtitle.srt",
+            )
+
+        self.assertTrue(preview.endswith("preview.mp4"))
+        trim.assert_called_once()
+        # 预览音频是裁剪后的副本，时长用常量
+        self.assertEqual(trim.call_args.args[2], tm.const.PREVIEW_DURATION)
+        combine.assert_called_once()
+        gen.assert_called_once()
+        # generate_video 的输出文件就是返回值
+        self.assertEqual(gen.call_args.kwargs["output_file"], preview)
+
     def test_task_local_materials(self):
         task_id = "00000000-0000-0000-0000-000000000000"
         video_materials=[]

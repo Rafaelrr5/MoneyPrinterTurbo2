@@ -247,6 +247,38 @@ def generate_final_videos(
     return final_video_paths, combined_video_paths
 
 
+def generate_preview(
+    task_id, params, downloaded_videos, audio_file, subtitle_path,
+    duration=const.PREVIEW_DURATION,
+):
+    """渲染一个约 duration 秒的样片：与成片同一条渲染管线，仅按裁剪后的音频截短。
+    每次调用都用 random 拼接，便于"重新生成预览"得到不同的镜头顺序。"""
+    preview_audio = path.join(utils.task_dir(task_id), "audio-preview.mp3")
+    video.trim_audio(audio_file, preview_audio, duration)
+
+    combined_preview = path.join(utils.task_dir(task_id), "combined-preview.mp4")
+    video.combine_videos(
+        combined_video_path=combined_preview,
+        video_paths=downloaded_videos,
+        audio_file=preview_audio,
+        video_aspect=params.video_aspect,
+        video_concat_mode=VideoConcatMode.random,
+        video_transition_mode=params.video_transition_mode,
+        max_clip_duration=params.video_clip_duration,
+        threads=params.n_threads,
+    )
+
+    preview_path = path.join(utils.task_dir(task_id), "preview.mp4")
+    video.generate_video(
+        video_path=combined_preview,
+        audio_path=preview_audio,
+        subtitle_path=subtitle_path,
+        output_file=preview_path,
+        params=params,
+    )
+    return preview_path
+
+
 def start(task_id, params: VideoParams, stop_at: str = "video"):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
