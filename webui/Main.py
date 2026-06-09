@@ -289,6 +289,8 @@ if not config.app.get("hide_config", False):
                 ("Qwen", "qwen"),
                 ("DeepSeek", "deepseek"),
                 ("ModelScope", "modelscope"),
+                ("OpenRouter", "openrouter"),
+                ("NVIDIA NIM", "nvidia"),
                 ("Gemini", "gemini"),
                 ("Grok", "grok"),
                 ("Groq", "groq"),
@@ -514,6 +516,32 @@ if not config.app.get("hide_config", False):
                             - **API Key**: [点击到官网申请](https://modelscope.cn/docs/model-service/API-Inference/intro)
                             - **Base Url**: 固定为 https://api-inference.modelscope.cn/v1/
                             - **Model Name**: 比如 Qwen/Qwen3-32B，[点击查看模型列表](https://modelscope.cn/models?filter=inference_type&page=1)
+                            """
+
+            if llm_provider == "openrouter":
+                if not llm_model_name:
+                    llm_model_name = "openai/gpt-4o-mini"
+                if not llm_base_url:
+                    llm_base_url = "https://openrouter.ai/api/v1"
+                with llm_helper:
+                    tips = """
+                            ##### OpenRouter 配置说明
+                            - **API Key**: [点击到官网申请](https://openrouter.ai/keys)
+                            - **Base Url**: 固定为 https://openrouter.ai/api/v1
+                            - **Model Name**: 形如 openai/gpt-4o-mini、meta-llama/llama-3.3-70b-instruct，[点击查看模型列表](https://openrouter.ai/models)
+                            """
+
+            if llm_provider == "nvidia":
+                if not llm_model_name:
+                    llm_model_name = "meta/llama-3.3-70b-instruct"
+                if not llm_base_url:
+                    llm_base_url = "https://integrate.api.nvidia.com/v1"
+                with llm_helper:
+                    tips = """
+                            ##### NVIDIA NIM 配置说明
+                            - **API Key**: [点击到官网申请](https://build.nvidia.com)（以 nvapi- 开头）
+                            - **Base Url**: 固定为 https://integrate.api.nvidia.com/v1
+                            - **Model Name**: 形如 meta/llama-3.3-70b-instruct、nvidia/llama-3.1-nemotron-70b-instruct
                             """
 
             if llm_provider == "ernie":

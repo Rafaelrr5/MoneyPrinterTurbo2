@@ -254,6 +254,28 @@ def _generate_response(prompt: str) -> str:
                 base_url = config.app.get("modelscope_base_url")
                 if not base_url:
                     base_url = "https://api-inference.modelscope.cn/v1/"
+            elif llm_provider == "openrouter":
+                api_key = config.app.get("openrouter_api_key")
+                model_name = config.app.get("openrouter_model_name")
+                base_url = config.app.get("openrouter_base_url", "")
+                # OpenRouter 兼容 OpenAI Chat Completions 协议，聚合数百个模型。
+                # 独立 provider 保存默认网关和模型 ID，避免和普通 OpenAI provider
+                # 互相覆盖。模型 ID 形如 "openai/gpt-4o-mini"、"meta-llama/llama-3.3-70b-instruct"。
+                if not base_url:
+                    base_url = "https://openrouter.ai/api/v1"
+                if not model_name:
+                    model_name = "openai/gpt-4o-mini"
+            elif llm_provider == "nvidia":
+                api_key = config.app.get("nvidia_api_key")
+                model_name = config.app.get("nvidia_model_name")
+                base_url = config.app.get("nvidia_base_url", "")
+                # NVIDIA NIM (build.nvidia.com / integrate.api.nvidia.com) 暴露
+                # OpenAI-compatible 接口。独立 provider 保存 NIM 默认网关和模型 ID，
+                # 模型 ID 形如 "meta/llama-3.3-70b-instruct"、"nvidia/llama-3.1-nemotron-70b-instruct"。
+                if not base_url:
+                    base_url = "https://integrate.api.nvidia.com/v1"
+                if not model_name:
+                    model_name = "meta/llama-3.3-70b-instruct"
             elif llm_provider == "ernie":
                 api_key = config.app.get("ernie_api_key")
                 secret_key = config.app.get("ernie_secret_key")

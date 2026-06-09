@@ -45,6 +45,8 @@ pixabay_api_keys = []
 #   mimo       (Xiaomi MiMo)
 #   ernie       (文心一言)
 #   modelscope  (魔搭社区)
+#   openrouter  (OpenAI-compatible gateway to 300+ models)
+#   nvidia      (NVIDIA NIM, OpenAI-compatible)
 #   litellm     (100+ providers via LiteLLM gateway)
 llm_provider = "openai"
 
@@ -165,6 +167,24 @@ deepseek_api_key = ""
 deepseek_base_url = "https://api.deepseek.com"
 deepseek_model_name = "deepseek-chat"
 
+
+########## OpenRouter API Key
+# OpenRouter is OpenAI-compatible and routes to 300+ models with one API key.
+# Visit https://openrouter.ai/keys to get your API key.
+# Browse model IDs at https://openrouter.ai/models (e.g. "openai/gpt-4o-mini",
+# "meta-llama/llama-3.3-70b-instruct", "anthropic/claude-3.5-sonnet").
+openrouter_api_key = ""
+openrouter_base_url = "https://openrouter.ai/api/v1"
+openrouter_model_name = "openai/gpt-4o-mini"
+
+########## NVIDIA NIM API Key
+# NVIDIA NIM exposes an OpenAI-compatible endpoint.
+# Visit https://build.nvidia.com to get your API key (starts with "nvapi-").
+# Browse model IDs in the model catalog (e.g. "meta/llama-3.3-70b-instruct",
+# "nvidia/llama-3.1-nemotron-70b-instruct").
+nvidia_api_key = ""
+nvidia_base_url = "https://integrate.api.nvidia.com/v1"
+nvidia_model_name = "meta/llama-3.3-70b-instruct"
 
 ########## ModelScope API Key
 # Visit https://modelscope.cn/docs/model-service/API-Inference/intro to get your API key
