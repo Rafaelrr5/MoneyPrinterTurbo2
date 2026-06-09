@@ -190,6 +190,12 @@
     "Subsequent Themes": "后续选题（:blue[AI 根据当前主题推荐下一批可拍视频]）",
     "Generate Subsequent Themes": "点击让 AI 根据**当前主题**推荐[后续选题]",
     "Generating Subsequent Themes": "AI 正在生成后续选题...",
-    "No Subsequent Themes Generated": "未生成后续选题，请重试。"
+    "No Subsequent Themes Generated": "未生成后续选题，请重试。",
+    "Preview Before Render": "渲染前预览",
+    "Preview Ready": "预览已生成 — 请查看下面的 10 秒片段，然后通过或重新生成",
+    "Approve Preview": "通过并渲染完整视频",
+    "Regenerate Preview": "重新生成预览",
+    "Cancel": "取消",
+    "Task Cancelled": "任务已取消"
   }
 }

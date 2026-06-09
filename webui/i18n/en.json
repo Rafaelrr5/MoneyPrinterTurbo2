@@ -204,6 +204,12 @@
     "Subsequent Themes": "Subsequent Themes (:blue[AI suggests related topics for your next videos])",
     "Generate Subsequent Themes": "Click to use AI to suggest [Subsequent Themes] for your next videos",
     "Generating Subsequent Themes": "AI is generating subsequent themes...",
-    "No Subsequent Themes Generated": "No subsequent themes generated. Please try again."
+    "No Subsequent Themes Generated": "No subsequent themes generated. Please try again.",
+    "Preview Before Render": "Preview before full render",
+    "Preview Ready": "Preview ready — review the 10-second clip below, then approve or regenerate",
+    "Approve Preview": "Approve & Render Full Video",
+    "Regenerate Preview": "Regenerate Preview",
+    "Cancel": "Cancel",
+    "Task Cancelled": "Task cancelled"
   }
 }
