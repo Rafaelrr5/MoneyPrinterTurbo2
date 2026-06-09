@@ -1572,8 +1572,56 @@ with right_panel:
             config.save_config()
             st.success(tr("YouTube Settings Saved"))
 
+# --- preview-approval gate state (survives Streamlit reruns within a session) ---
+if "preview_stage" not in st.session_state:
+    st.session_state["preview_stage"] = "idle"
+if "preview_ctx" not in st.session_state:
+    st.session_state["preview_ctx"] = None
+
+
+def _attach_log_sink():
+    log_container = st.empty()
+    log_records = []
+
+    def log_received(msg):
+        if config.ui["hide_log"]:
+            return
+        with log_container:
+            log_records.append(msg)
+            st.code("\n".join(log_records))
+
+    logger.add(log_received)
+
+
+def _render_final_result(result, task_id):
+    if not result or "videos" not in result:
+        st.error(tr("Video Generation Failed"))
+        logger.error(tr("Video Generation Failed"))
+        scroll_to_bottom()
+        st.stop()
+    video_files = result.get("videos", [])
+    st.success(tr("Video Generation Completed"))
+    try:
+        if video_files:
+            player_cols = st.columns(len(video_files) * 2 + 1)
+            for i, url in enumerate(video_files):
+                player_cols[i * 2 + 1].video(url)
+    except Exception:
+        pass
+    open_task_folder(task_id)
+    logger.info(tr("Video Generation Completed"))
+    scroll_to_bottom()
+
+
+preview_enabled = st.checkbox(
+    tr("Preview Before Render"),
+    value=config.ui.get("preview_before_render", True),
+)
+config.ui["preview_before_render"] = preview_enabled
+
 start_button = st.button(tr("Generate Video"), use_container_width=True, type="primary")
-if start_button:
+
+if start_button and st.session_state["preview_stage"] == "idle":
     config.save_config()
     task_id = str(uuid4())
     if not params.video_subject and not params.video_script:
@@ -1640,42 +1688,102 @@ if start_button:
             if m.url:
                 params.video_materials.append(m)
 
-    log_container = st.empty()
-    log_records = []
-
-    def log_received(msg):
-        if config.ui["hide_log"]:
-            return
-        with log_container:
-            log_records.append(msg)
-            st.code("\n".join(log_records))
-
-    logger.add(log_received)
-
+    _attach_log_sink()
     st.toast(tr("Generating Video"))
     logger.info(tr("Start Generating Video"))
     logger.info(utils.to_json(params))
     scroll_to_bottom()
 
-    result = tm.start(task_id=task_id, params=params)
-    if not result or "videos" not in result:
-        st.error(tr("Video Generation Failed"))
-        logger.error(tr("Video Generation Failed"))
+    if not preview_enabled:
+        # 预览关闭：保持原有一次性全流程行为。
+        result = tm.start(task_id=task_id, params=params)
+        _render_final_result(result, task_id)
+    else:
+        # Phase 1: 跑到素材下载完成，再渲染 10 秒样片，暂停等待确认。
+        result = tm.start(task_id=task_id, params=params, stop_at="materials")
+        if not result or "materials" not in result:
+            st.error(tr("Video Generation Failed"))
+            logger.error(tr("Video Generation Failed"))
+            scroll_to_bottom()
+            st.stop()
+        try:
+            preview_path = tm.generate_preview(
+                task_id=task_id,
+                params=params,
+                downloaded_videos=result["materials"],
+                audio_file=result["audio_file"],
+                subtitle_path=result["subtitle_path"],
+            )
+        except Exception as e:
+            st.error(f'{tr("Video Generation Failed")}: {e}')
+            logger.error(f"failed to generate preview: {e}")
+            scroll_to_bottom()
+            st.stop()
+        st.session_state["preview_ctx"] = {
+            "task_id": task_id,
+            "params": params,
+            "materials": result["materials"],
+            "audio_file": result["audio_file"],
+            "subtitle_path": result["subtitle_path"],
+            "script": result.get("script", ""),
+            "terms": result.get("terms", ""),
+            "audio_duration": result.get("audio_duration", 0),
+            "preview_path": preview_path,
+        }
+        st.session_state["preview_stage"] = "awaiting_approval"
+        st.rerun()
+
+if st.session_state["preview_stage"] == "awaiting_approval":
+    ctx = st.session_state["preview_ctx"]
+    st.info(tr("Preview Ready"))
+    st.video(ctx["preview_path"])
+    col_a, col_r, col_c = st.columns(3)
+    approve = col_a.button(
+        tr("Approve Preview"), use_container_width=True, type="primary"
+    )
+    regenerate = col_r.button(tr("Regenerate Preview"), use_container_width=True)
+    cancel = col_c.button(tr("Cancel"), use_container_width=True)
+
+    if approve:
+        _attach_log_sink()
+        st.toast(tr("Generating Video"))
         scroll_to_bottom()
+        result = tm.finalize_from_materials(
+            task_id=ctx["task_id"],
+            params=ctx["params"],
+            downloaded_videos=ctx["materials"],
+            audio_file=ctx["audio_file"],
+            subtitle_path=ctx["subtitle_path"],
+            video_script=ctx["script"],
+            video_terms=ctx["terms"],
+            audio_duration=ctx["audio_duration"],
+        )
+        st.session_state["preview_stage"] = "idle"
+        st.session_state["preview_ctx"] = None
+        _render_final_result(result, ctx["task_id"])
+
+    elif regenerate:
+        _attach_log_sink()
+        st.toast(tr("Generating Video"))
+        try:
+            ctx["preview_path"] = tm.generate_preview(
+                task_id=ctx["task_id"],
+                params=ctx["params"],
+                downloaded_videos=ctx["materials"],
+                audio_file=ctx["audio_file"],
+                subtitle_path=ctx["subtitle_path"],
+            )
+            st.session_state["preview_ctx"] = ctx
+        except Exception as e:
+            st.error(f'{tr("Video Generation Failed")}: {e}')
+            logger.error(f"failed to regenerate preview: {e}")
+        st.rerun()
+
+    elif cancel:
+        tm.sm.state.update_task(ctx["task_id"], state=tm.const.TASK_STATE_FAILED)
+        st.session_state["preview_stage"] = "idle"
+        st.session_state["preview_ctx"] = None
+        st.warning(tr("Task Cancelled"))
         st.stop()
-
-    video_files = result.get("videos", [])
-    st.success(tr("Video Generation Completed"))
-    try:
-        if video_files:
-            player_cols = st.columns(len(video_files) * 2 + 1)
-            for i, url in enumerate(video_files):
-                player_cols[i * 2 + 1].video(url)
-    except Exception:
-        pass
-
-    open_task_folder(task_id)
-    logger.info(tr("Video Generation Completed"))
-    scroll_to_bottom()
 
 config.save_config()
