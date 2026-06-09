@@ -8,7 +8,7 @@ from loguru import logger
 from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
-from app.services import llm, material, subtitle, video, voice, upload_post
+from app.services import llm, material, subtitle, video, voice, upload_post, youtube_upload
 from app.services import state as sm
 from app.utils import utils
 
@@ -370,6 +370,45 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
             else:
                 logger.warning(f"⚠️ Failed to cross-post: {video_path} - {result.get('error', 'Unknown error')}")
 
+    # 8. Upload to YouTube via the official Data API v3 (if enabled)
+    youtube_results = []
+    if (
+        youtube_upload.youtube_upload_service.is_configured()
+        and youtube_upload.youtube_upload_service.auto_upload
+    ):
+        logger.info("\n\n## uploading videos to YouTube")
+        for index, video_path in enumerate(final_video_paths):
+            # 复用现有社媒文案能力，按 YouTube Shorts 规格产出 title/描述/标签。
+            meta = llm.generate_social_metadata(
+                video_subject=params.video_subject,
+                video_script=video_script,
+                language=params.video_language,
+                platform="youtube_shorts",
+            )
+            hashtags = meta.get("hashtags", [])
+            caption = meta.get("caption", "")
+            description = (
+                f"{caption}\n\n{' '.join(hashtags)}".strip() if hashtags else caption
+            )
+            thumbnail_path = path.join(
+                utils.task_dir(task_id), f"thumbnail-{index + 1}.jpg"
+            )
+            thumbnail = video.extract_thumbnail(video_path, thumbnail_path)
+            result = youtube_upload.youtube_upload_service.upload_video(
+                video_path=video_path,
+                title=meta.get("title") or params.video_subject or "Untitled",
+                description=description,
+                tags=hashtags,
+                thumbnail_path=thumbnail,
+            )
+            youtube_results.append(result)
+            if result.get("success"):
+                logger.success(f"✅ Uploaded to YouTube: {result.get('url')}")
+            else:
+                logger.warning(
+                    f"⚠️ Failed to upload to YouTube: {video_path} - {result.get('error', 'Unknown error')}"
+                )
+
     kwargs = {
         "videos": final_video_paths,
         "combined_videos": combined_video_paths,
@@ -380,6 +419,7 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
         "subtitle_path": subtitle_path,
         "materials": downloaded_videos,
         "cross_post_results": cross_post_results if cross_post_results else None,
+        "youtube_results": youtube_results if youtube_results else None,
     }
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs

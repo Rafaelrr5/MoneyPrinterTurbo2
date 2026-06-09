@@ -393,6 +393,28 @@ def _open_video_clip_quietly(video_path: str, audio: bool = False) -> VideoFileC
     return clip
 
 
+def extract_thumbnail(video_path: str, output_path: str, t: float = 1.0):
+    """
+    从成片中抽取一帧作为缩略图（用于 YouTube 上传）。
+
+    默认取第 1 秒；若视频更短则退回到中间帧，避免 save_frame 越界。
+    返回生成的图片路径；失败时返回 None，调用方据此跳过缩略图（缩略图缺失
+    不应阻断上传主流程）。
+    """
+    clip = None
+    try:
+        clip = _open_video_clip_quietly(video_path)
+        duration = clip.duration or 0
+        frame_time = t if duration > t else duration / 2
+        clip.save_frame(output_path, t=frame_time)
+        return output_path
+    except Exception as e:
+        logger.warning(f"failed to extract thumbnail from {video_path}: {str(e)}")
+        return None
+    finally:
+        close_clip(clip)
+
+
 def close_clip(clip):
     if clip is None:
         return

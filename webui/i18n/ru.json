@@ -152,6 +152,20 @@
     "Custom Position (% from top)": "Пользовательское положение (% от верхнего края)",
     "Please enter a value between 0 and 100": "Введите значение от 0 до 100",
     "Please enter a valid number": "Введите корректное число",
-    "Please Select a Valid Video Source": "Выберите поддерживаемый источник материалов"
+    "Please Select a Valid Video Source": "Выберите поддерживаемый источник материалов",
+    "YouTube Upload Settings": "Настройки загрузки на YouTube",
+    "YouTube Upload Help": "Загрузка сгенерированных видео на YouTube через официальный Data API v3 (без посредников). Требуется OAuth-клиент Google Cloud и одноразовый refresh token. Квота позволяет примерно 6 загрузок в день.",
+    "Enable YouTube Upload": "Включить загрузку на YouTube",
+    "YouTube Client ID": "OAuth Client ID",
+    "YouTube Client Secret": "OAuth Client Secret",
+    "YouTube Refresh Token": "Refresh Token",
+    "YouTube Refresh Token Help": "Сгенерируйте один раз командой: uv run python scripts/youtube_auth.py — затем вставьте сюда показанный refresh token.",
+    "YouTube Privacy Status": "Уровень доступа",
+    "YouTube Category ID": "ID категории (22=Люди и блоги, 27=Образование, 28=Наука и технологии)",
+    "YouTube Default Tags": "Теги по умолчанию (через запятую)",
+    "YouTube Made For Kids": "Пометить видео как «Для детей»",
+    "YouTube Auto Upload": "Автоматически загружать после генерации видео",
+    "Save YouTube Settings": "Сохранить настройки YouTube",
+    "YouTube Settings Saved": "Настройки YouTube сохранены"
   }
 }

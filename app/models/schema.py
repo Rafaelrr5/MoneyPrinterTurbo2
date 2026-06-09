@@ -224,6 +224,29 @@ class VideoSocialMetadataRequest(VideoSocialMetadataParams, BaseModel):
     pass
 
 
+class YouTubeUploadRequest(BaseModel):
+    """
+    {
+      "task_id": "6c85c8cc-a77a-42b9-bc30-947815aa0558",
+      "file": "final-1.mp4",
+      "generate_metadata": true
+    }
+    """
+
+    task_id: str
+    # 待上传的成片文件名（任务目录内）。留空时取目录下最新的 final-*.mp4。
+    file: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list] = None
+    privacy_status: Optional[str] = None  # public | unlisted | private
+    category_id: Optional[str] = None
+    generate_metadata: bool = True
+    video_subject: Optional[str] = None
+    video_script: Optional[str] = None
+    language: Optional[str] = "auto"
+
+
 ######################################################################################################
 ######################################################################################################
 ######################################################################################################
@@ -318,6 +341,20 @@ class VideoSocialMetadataResponse(BaseResponse):
                     "title": "A Day in Shanghai You Should Not Miss",
                     "caption": "Save this quick Shanghai inspiration and follow for more short travel ideas.",
                     "hashtags": ["#shorts", "#travel", "#shanghai", "#viral", "#fyp"],
+                },
+            },
+        }
+
+
+class YouTubeUploadResponse(BaseResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": 200,
+                "message": "success",
+                "data": {
+                    "video_id": "dQw4w9WgXcQ",
+                    "url": "https://youtu.be/dQw4w9WgXcQ",
                 },
             },
         }

@@ -152,6 +152,20 @@
     "Pixabay API Key deleted successfully": "Pixabay API Key deleted successfully",
     "Advanced Video Settings": "Advanced Video Settings",
     "Video Encoder": "Video Encoder",
-    "Video Encoder Help": "Advanced option. libx264 is the safest default. When a hardware encoder is selected, the app falls back to libx264 if the current FFmpeg, GPU, or driver cannot use it."
+    "Video Encoder Help": "Advanced option. libx264 is the safest default. When a hardware encoder is selected, the app falls back to libx264 if the current FFmpeg, GPU, or driver cannot use it.",
+    "YouTube Upload Settings": "YouTube Upload Settings",
+    "YouTube Upload Help": "Upload generated videos to YouTube via the official Data API v3 (no third party). Requires a Google Cloud OAuth client and a one-time refresh token. Quota allows roughly 6 uploads/day.",
+    "Enable YouTube Upload": "Enable YouTube Upload",
+    "YouTube Client ID": "OAuth Client ID",
+    "YouTube Client Secret": "OAuth Client Secret",
+    "YouTube Refresh Token": "Refresh Token",
+    "YouTube Refresh Token Help": "Generate once by running: uv run python scripts/youtube_auth.py — then paste the printed refresh token here.",
+    "YouTube Privacy Status": "Privacy Status",
+    "YouTube Category ID": "Category ID (22=People & Blogs, 27=Education, 28=Science & Tech)",
+    "YouTube Default Tags": "Default Tags (comma-separated)",
+    "YouTube Made For Kids": "Mark videos as Made for Kids",
+    "YouTube Auto Upload": "Automatically upload after video generation",
+    "Save YouTube Settings": "Save YouTube Settings",
+    "YouTube Settings Saved": "YouTube settings saved successfully"
   }
 }

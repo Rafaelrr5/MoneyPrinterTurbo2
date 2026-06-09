@@ -1362,6 +1362,58 @@ with right_panel:
                     config.save_config()
                     st.success(tr("Pixabay API Key deleted successfully"))
 
+    with st.expander(tr("YouTube Upload Settings"), expanded=False):
+        st.caption(tr("YouTube Upload Help"))
+        config.app["youtube_enabled"] = st.checkbox(
+            tr("Enable YouTube Upload"), value=config.app.get("youtube_enabled", False)
+        )
+        config.app["youtube_client_id"] = st.text_input(
+            tr("YouTube Client ID"), value=config.app.get("youtube_client_id", "")
+        )
+        config.app["youtube_client_secret"] = st.text_input(
+            tr("YouTube Client Secret"),
+            value=config.app.get("youtube_client_secret", ""),
+            type="password",
+        )
+        config.app["youtube_refresh_token"] = st.text_input(
+            tr("YouTube Refresh Token"),
+            value=config.app.get("youtube_refresh_token", ""),
+            type="password",
+        )
+        st.caption(tr("YouTube Refresh Token Help"))
+
+        privacy_options = ["public", "unlisted", "private"]
+        saved_privacy = config.app.get("youtube_privacy_status", "public")
+        config.app["youtube_privacy_status"] = st.selectbox(
+            tr("YouTube Privacy Status"),
+            options=privacy_options,
+            index=privacy_options.index(saved_privacy)
+            if saved_privacy in privacy_options
+            else 0,
+        )
+        config.app["youtube_category_id"] = st.text_input(
+            tr("YouTube Category ID"),
+            value=str(config.app.get("youtube_category_id", "22")),
+        )
+        tags_str = st.text_input(
+            tr("YouTube Default Tags"),
+            value=",".join(config.app.get("youtube_default_tags", []) or []),
+        )
+        config.app["youtube_default_tags"] = [
+            t.strip() for t in tags_str.split(",") if t.strip()
+        ]
+        config.app["youtube_made_for_kids"] = st.checkbox(
+            tr("YouTube Made For Kids"),
+            value=config.app.get("youtube_made_for_kids", False),
+        )
+        config.app["youtube_auto_upload"] = st.checkbox(
+            tr("YouTube Auto Upload"),
+            value=config.app.get("youtube_auto_upload", False),
+        )
+        if st.button(tr("Save YouTube Settings")):
+            config.save_config()
+            st.success(tr("YouTube Settings Saved"))
+
 start_button = st.button(tr("Generate Video"), use_container_width=True, type="primary")
 if start_button:
     config.save_config()

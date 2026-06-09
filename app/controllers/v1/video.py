@@ -27,10 +27,14 @@ from app.models.schema import (
     TaskResponse,
     TaskVideoRequest,
     VideoMaterialUploadResponse,
-    VideoMaterialRetrieveResponse
+    VideoMaterialRetrieveResponse,
+    YouTubeUploadRequest,
+    YouTubeUploadResponse,
 )
 from app.services import state as sm
 from app.services import task as tm
+from app.services import llm, youtube_upload
+from app.services import video as vs
 from app.utils import file_security, utils
 
 # 认证依赖项
@@ -131,6 +135,82 @@ def create_audio(
     background_tasks: BackgroundTasks, request: Request, body: AudioRequest
 ):
     return create_task(request, body, stop_at="audio")
+
+
+@router.post(
+    "/youtube",
+    response_model=YouTubeUploadResponse,
+    summary="Upload an existing task video to YouTube",
+)
+def create_youtube_upload(request: Request, body: YouTubeUploadRequest):
+    request_id = base.get_task_id(request)
+    if not youtube_upload.youtube_upload_service.is_configured():
+        raise HttpException(
+            task_id=body.task_id,
+            status_code=400,
+            message=f"{request_id}: YouTube upload is not configured",
+        )
+
+    task_directory = utils.task_dir(body.task_id)
+    # 定位待上传成片：显式指定文件名时做路径安全校验；否则取最新的 final-*.mp4。
+    if body.file:
+        video_path = _resolve_path_within_directory(
+            task_directory, body.file, request_id
+        )
+    else:
+        finals = sorted(glob.glob(os.path.join(task_directory, "final-*.mp4")))
+        if not finals:
+            raise HttpException(
+                task_id=body.task_id,
+                status_code=404,
+                message=f"{request_id}: no final video found for task",
+            )
+        video_path = finals[-1]
+
+    title = body.title
+    description = body.description
+    tags = body.tags
+    # 缺少标题/描述且允许自动生成时，复用 LLM 按 YouTube Shorts 规格补齐文案。
+    if body.generate_metadata and not (title and description):
+        meta = llm.generate_social_metadata(
+            video_subject=body.video_subject or "",
+            video_script=body.video_script or "",
+            language=body.language or "auto",
+            platform="youtube_shorts",
+        )
+        hashtags = meta.get("hashtags", [])
+        title = title or meta.get("title")
+        if description is None:
+            caption = meta.get("caption", "")
+            description = (
+                f"{caption}\n\n{' '.join(hashtags)}".strip() if hashtags else caption
+            )
+        if tags is None:
+            tags = hashtags
+
+    title = title or body.video_subject or "Untitled"
+
+    thumbnail = vs.extract_thumbnail(
+        video_path, os.path.join(task_directory, "thumbnail-yt.jpg")
+    )
+    result = youtube_upload.youtube_upload_service.upload_video(
+        video_path=video_path,
+        title=title,
+        description=description or "",
+        tags=tags,
+        privacy_status=body.privacy_status,
+        category_id=body.category_id,
+        thumbnail_path=thumbnail,
+    )
+    if not result.get("success"):
+        raise HttpException(
+            task_id=body.task_id,
+            status_code=502,
+            message=f"{request_id}: {result.get('error', 'YouTube upload failed')}",
+        )
+    return utils.get_response(
+        200, {"video_id": result.get("video_id"), "url": result.get("url")}
+    )
 
 
 def create_task(
