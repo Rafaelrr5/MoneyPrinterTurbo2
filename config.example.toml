@@ -336,6 +336,29 @@ api_key = ""
 # Whether to hide logs in the UI
 hide_log = false
 
+# 输入可见性设置 (Input visibility settings)
+# 由 WebUI 的 "Visibility Settings" 面板读写；也可手动编辑。
+# Read/written by the WebUI "Visibility Settings" panel; can also be edited by hand.
+#
+# 精简下拉项：列出要保留的选项 id。留空或不设置 = 显示全部。
+# Trim dropdown options: list the option ids to keep. Empty/unset = show all.
+# enabled_llm_providers = ["openai", "deepseek"]
+# enabled_video_sources = ["pexels", "local"]
+# enabled_tts_servers = ["azure-tts-v1"]
+# enabled_video_aspects = ["9:16"]
+# enabled_video_concat_modes = ["random"]
+# enabled_bgm_types = ["", "random"]
+# enabled_subtitle_positions = ["bottom"]
+#
+# 隐藏单个字段：列出要隐藏的字段 id，被隐藏的字段会回退到默认值。
+# Hide individual fields: list field ids to hide; each hidden field falls back to its default.
+# 可用 id (available ids): script_language, advanced_script_settings, subsequent_themes,
+#   video_concat_mode, video_transition_mode, video_aspect, video_clip_duration, video_count,
+#   advanced_video_settings, play_voice, custom_audio_file, speech_volume, speech_rate,
+#   background_music, subtitle_stroke, subtitle_background, rounded_subtitle_background,
+#   karaoke_highlight, youtube_upload, api_key_management
+# hidden_fields = ["video_transition_mode", "youtube_upload"]
+
 # 字幕位置设置 (Subtitle position settings)
 # 可选值 (Available values): "top", "center", "bottom", "custom"
 # subtitle_position = "custom"

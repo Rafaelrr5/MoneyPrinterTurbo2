@@ -26,6 +26,7 @@ from app.models.schema import (
 from app.services import llm, voice
 from app.services import task as tm
 from app.utils import utils
+from webui import visibility as vis
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
@@ -307,6 +308,10 @@ if not config.app.get("hide_config", False):
                 ("Pollinations", "pollinations"),
                 ("LiteLLM", "litellm"),
             ]
+            # 按可见性配置精简供应商下拉；trim 永不返回空列表，下面按值查 index 也能兜底。
+            llm_provider_options = vis.trim(
+                "enabled_llm_providers", llm_provider_options, id_index=1
+            )
             llm_provider_labels = [label for label, _ in llm_provider_options]
             llm_provider_values = {
                 label: provider_id for label, provider_id in llm_provider_options
@@ -686,6 +691,11 @@ if not config.app.get("hide_config", False):
             )
             save_keys_to_config("pixabay_api_keys", pixabay_api_key)
 
+# 可见性设置：让运营者按需精简下拉项 / 隐藏字段，避免界面被不用的选项淹没。
+# 与基础设置共用 hide_config 开关。
+if not config.app.get("hide_config", False):
+    vis.render_visibility_panel(tr)
+
 llm_provider = config.app.get("llm_provider", "").lower()
 panel = st.columns(3)
 left_panel = panel[0]
@@ -704,56 +714,64 @@ with left_panel:
             key="video_subject",
         ).strip()
 
-        video_languages = [
-            (tr("Auto Detect"), ""),
-        ]
-        for code in support_locales:
-            video_languages.append((code, code))
+        if not vis.is_hidden("script_language"):
+            video_languages = [
+                (tr("Auto Detect"), ""),
+            ]
+            for code in support_locales:
+                video_languages.append((code, code))
 
-        selected_index = st.selectbox(
-            tr("Script Language"),
-            index=0,
-            options=range(
-                len(video_languages)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_languages[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        params.video_language = video_languages[selected_index][1]
-
-        with st.expander(tr("Advanced Script Settings"), expanded=False):
-            params.paragraph_number = st.slider(
-                tr("Script Paragraph Number"),
-                min_value=llm.MIN_SCRIPT_PARAGRAPH_NUMBER,
-                max_value=llm.MAX_SCRIPT_PARAGRAPH_NUMBER,
-                value=st.session_state.get("paragraph_number_input", 1),
-                key="paragraph_number_input",
+            selected_index = st.selectbox(
+                tr("Script Language"),
+                index=0,
+                options=range(
+                    len(video_languages)
+                ),  # Use the index as the internal option value
+                format_func=lambda x: video_languages[x][
+                    0
+                ],  # The label is displayed to the user
             )
-            params.video_script_prompt = st.text_area(
-                tr("Custom Script Requirements"),
-                height=100,
-                max_chars=llm.MAX_SCRIPT_PROMPT_LENGTH,
-                placeholder=tr("Custom Script Requirements Placeholder"),
-                key="video_script_prompt",
-            ).strip()
+            params.video_language = video_languages[selected_index][1]
+        else:
+            params.video_language = ""
 
-            use_custom_system_prompt = st.checkbox(
-                tr("Use Custom System Prompt"),
-                help=tr("Use Custom System Prompt Help"),
-                key="use_custom_system_prompt",
-            )
-
-            if use_custom_system_prompt:
-                custom_system_prompt = st.text_area(
-                    tr("Custom System Prompt"),
-                    height=240,
-                    max_chars=llm.MAX_SCRIPT_SYSTEM_PROMPT_LENGTH,
-                    key="custom_system_prompt",
+        if not vis.is_hidden("advanced_script_settings"):
+            with st.expander(tr("Advanced Script Settings"), expanded=False):
+                params.paragraph_number = st.slider(
+                    tr("Script Paragraph Number"),
+                    min_value=llm.MIN_SCRIPT_PARAGRAPH_NUMBER,
+                    max_value=llm.MAX_SCRIPT_PARAGRAPH_NUMBER,
+                    value=st.session_state.get("paragraph_number_input", 1),
+                    key="paragraph_number_input",
+                )
+                params.video_script_prompt = st.text_area(
+                    tr("Custom Script Requirements"),
+                    height=100,
+                    max_chars=llm.MAX_SCRIPT_PROMPT_LENGTH,
+                    placeholder=tr("Custom Script Requirements Placeholder"),
+                    key="video_script_prompt",
                 ).strip()
-                params.custom_system_prompt = custom_system_prompt
-            else:
-                params.custom_system_prompt = ""
+
+                use_custom_system_prompt = st.checkbox(
+                    tr("Use Custom System Prompt"),
+                    help=tr("Use Custom System Prompt Help"),
+                    key="use_custom_system_prompt",
+                )
+
+                if use_custom_system_prompt:
+                    custom_system_prompt = st.text_area(
+                        tr("Custom System Prompt"),
+                        height=240,
+                        max_chars=llm.MAX_SCRIPT_SYSTEM_PROMPT_LENGTH,
+                        key="custom_system_prompt",
+                    ).strip()
+                    params.custom_system_prompt = custom_system_prompt
+                else:
+                    params.custom_system_prompt = ""
+        else:
+            params.paragraph_number = 1
+            params.video_script_prompt = ""
+            params.custom_system_prompt = ""
 
         if st.button(
             tr("Generate Video Script and Keywords"), key="auto_generate_script"
@@ -795,28 +813,29 @@ with left_panel:
 
         # AI 根据当前主题/脚本推荐"下一批可以拍的相关主题"，帮助规划系列内容。
         # 仅作为创作建议展示，不参与本次视频生成。
-        st.write(tr("Subsequent Themes"))
-        if st.button(
-            tr("Generate Subsequent Themes"), key="auto_generate_subsequent_themes"
-        ):
-            if not params.video_subject:
-                st.error(tr("Please Enter the Video Subject"))
-                st.stop()
+        if not vis.is_hidden("subsequent_themes"):
+            st.write(tr("Subsequent Themes"))
+            if st.button(
+                tr("Generate Subsequent Themes"), key="auto_generate_subsequent_themes"
+            ):
+                if not params.video_subject:
+                    st.error(tr("Please Enter the Video Subject"))
+                    st.stop()
 
-            with st.spinner(tr("Generating Subsequent Themes")):
-                themes = llm.generate_subsequent_themes(
-                    video_subject=params.video_subject,
-                    video_script=params.video_script,
-                    language=params.video_language,
-                )
-                st.session_state["subsequent_themes"] = themes
-                if not themes:
-                    st.warning(tr("No Subsequent Themes Generated"))
+                with st.spinner(tr("Generating Subsequent Themes")):
+                    themes = llm.generate_subsequent_themes(
+                        video_subject=params.video_subject,
+                        video_script=params.video_script,
+                        language=params.video_language,
+                    )
+                    st.session_state["subsequent_themes"] = themes
+                    if not themes:
+                        st.warning(tr("No Subsequent Themes Generated"))
 
-        for item in st.session_state["subsequent_themes"]:
-            theme = item.get("theme", "")
-            hook = item.get("hook", "")
-            st.markdown(f"- **{theme}**" + (f" — {hook}" if hook else ""))
+            for item in st.session_state["subsequent_themes"]:
+                theme = item.get("theme", "")
+                hook = item.get("hook", "")
+                st.markdown(f"- **{theme}**" + (f" — {hook}" if hook else ""))
 
 with middle_panel:
     with st.container(border=True):
@@ -834,9 +853,12 @@ with middle_panel:
             (tr("Xiaohongshu"), "xiaohongshu"),
         ]
 
+        video_sources = vis.trim("enabled_video_sources", video_sources, id_index=1)
+
         saved_video_source_name = config.app.get("video_source", "pexels")
-        saved_video_source_index = [v[1] for v in video_sources].index(
-            saved_video_source_name
+        # 用 resolve_index 兜底：保存的来源若被精简掉，回退到第一个可见项而非抛 ValueError。
+        saved_video_source_index = vis.resolve_index(
+            video_sources, saved_video_source_name, "pexels", id_index=1
         )
 
         selected_index = st.selectbox(
@@ -857,85 +879,112 @@ with middle_panel:
                 accept_multiple_files=True,
             )
 
-        selected_index = st.selectbox(
-            tr("Video Concat Mode"),
-            index=1,
-            options=range(
-                len(video_concat_modes)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_concat_modes[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        params.video_concat_mode = VideoConcatMode(
-            video_concat_modes[selected_index][1]
-        )
+        if not vis.is_hidden("video_concat_mode"):
+            video_concat_modes = vis.trim(
+                "enabled_video_concat_modes", video_concat_modes, id_index=1
+            )
+            selected_index = st.selectbox(
+                tr("Video Concat Mode"),
+                index=vis.resolve_index(
+                    video_concat_modes, "random", "random", id_index=1
+                ),
+                options=range(
+                    len(video_concat_modes)
+                ),  # Use the index as the internal option value
+                format_func=lambda x: video_concat_modes[x][
+                    0
+                ],  # The label is displayed to the user
+            )
+            params.video_concat_mode = VideoConcatMode(
+                video_concat_modes[selected_index][1]
+            )
+        else:
+            params.video_concat_mode = VideoConcatMode("random")
 
         # 视频转场模式
-        video_transition_modes = [
-            (tr("None"), VideoTransitionMode.none.value),
-            (tr("Shuffle"), VideoTransitionMode.shuffle.value),
-            (tr("FadeIn"), VideoTransitionMode.fade_in.value),
-            (tr("FadeOut"), VideoTransitionMode.fade_out.value),
-            (tr("SlideIn"), VideoTransitionMode.slide_in.value),
-            (tr("SlideOut"), VideoTransitionMode.slide_out.value),
-        ]
-        selected_index = st.selectbox(
-            tr("Video Transition Mode"),
-            options=range(len(video_transition_modes)),
-            format_func=lambda x: video_transition_modes[x][0],
-            index=0,
-        )
-        params.video_transition_mode = VideoTransitionMode(
-            video_transition_modes[selected_index][1]
-        )
-
-        video_aspect_ratios = [
-            (tr("Portrait"), VideoAspect.portrait.value),
-            (tr("Landscape"), VideoAspect.landscape.value),
-        ]
-        selected_index = st.selectbox(
-            tr("Video Ratio"),
-            options=range(
-                len(video_aspect_ratios)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_aspect_ratios[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
-
-        params.video_clip_duration = st.selectbox(
-            tr("Clip Duration"), options=[2, 3, 4, 5, 6, 7, 8, 9, 10], index=1
-        )
-        params.video_count = st.selectbox(
-            tr("Number of Videos Generated Simultaneously"),
-            options=[1, 2, 3, 4, 5],
-            index=0,
-        )
-
-        with st.expander(tr("Advanced Video Settings"), expanded=False):
-            video_codec_options = [
-                ("libx264 (CPU)", "libx264"),
-                ("NVIDIA NVENC (h264_nvenc)", "h264_nvenc"),
-                ("AMD AMF (h264_amf)", "h264_amf"),
-                ("Intel QSV (h264_qsv)", "h264_qsv"),
-                ("Windows MediaFoundation (h264_mf)", "h264_mf"),
-                ("macOS VideoToolbox (h264_videotoolbox)", "h264_videotoolbox"),
+        if not vis.is_hidden("video_transition_mode"):
+            video_transition_modes = [
+                (tr("None"), VideoTransitionMode.none.value),
+                (tr("Shuffle"), VideoTransitionMode.shuffle.value),
+                (tr("FadeIn"), VideoTransitionMode.fade_in.value),
+                (tr("FadeOut"), VideoTransitionMode.fade_out.value),
+                (tr("SlideIn"), VideoTransitionMode.slide_in.value),
+                (tr("SlideOut"), VideoTransitionMode.slide_out.value),
             ]
-            saved_video_codec = config.app.get("video_codec", "libx264")
-            saved_video_codec_values = [item[1] for item in video_codec_options]
-            if saved_video_codec not in saved_video_codec_values:
-                saved_video_codec = "libx264"
-            selected_codec_index = saved_video_codec_values.index(saved_video_codec)
-            selected_codec_index = st.selectbox(
-                tr("Video Encoder"),
-                options=range(len(video_codec_options)),
-                index=selected_codec_index,
-                format_func=lambda x: video_codec_options[x][0],
-                help=tr("Video Encoder Help"),
+            selected_index = st.selectbox(
+                tr("Video Transition Mode"),
+                options=range(len(video_transition_modes)),
+                format_func=lambda x: video_transition_modes[x][0],
+                index=0,
             )
-            config.app["video_codec"] = video_codec_options[selected_codec_index][1]
+            params.video_transition_mode = VideoTransitionMode(
+                video_transition_modes[selected_index][1]
+            )
+        else:
+            params.video_transition_mode = None
+
+        if not vis.is_hidden("video_aspect"):
+            video_aspect_ratios = [
+                (tr("Portrait"), VideoAspect.portrait.value),
+                (tr("Landscape"), VideoAspect.landscape.value),
+            ]
+            video_aspect_ratios = vis.trim(
+                "enabled_video_aspects", video_aspect_ratios, id_index=1
+            )
+            selected_index = st.selectbox(
+                tr("Video Ratio"),
+                options=range(
+                    len(video_aspect_ratios)
+                ),  # Use the index as the internal option value
+                format_func=lambda x: video_aspect_ratios[x][
+                    0
+                ],  # The label is displayed to the user
+            )
+            params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
+        else:
+            params.video_aspect = VideoAspect(VideoAspect.portrait.value)
+
+        if not vis.is_hidden("video_clip_duration"):
+            params.video_clip_duration = st.selectbox(
+                tr("Clip Duration"), options=[2, 3, 4, 5, 6, 7, 8, 9, 10], index=1
+            )
+        else:
+            params.video_clip_duration = 3
+        if not vis.is_hidden("video_count"):
+            params.video_count = st.selectbox(
+                tr("Number of Videos Generated Simultaneously"),
+                options=[1, 2, 3, 4, 5],
+                index=0,
+            )
+        else:
+            params.video_count = 1
+
+        if not vis.is_hidden("advanced_video_settings"):
+            with st.expander(tr("Advanced Video Settings"), expanded=False):
+                video_codec_options = [
+                    ("libx264 (CPU)", "libx264"),
+                    ("NVIDIA NVENC (h264_nvenc)", "h264_nvenc"),
+                    ("AMD AMF (h264_amf)", "h264_amf"),
+                    ("Intel QSV (h264_qsv)", "h264_qsv"),
+                    ("Windows MediaFoundation (h264_mf)", "h264_mf"),
+                    ("macOS VideoToolbox (h264_videotoolbox)", "h264_videotoolbox"),
+                ]
+                saved_video_codec = config.app.get("video_codec", "libx264")
+                saved_video_codec_values = [item[1] for item in video_codec_options]
+                if saved_video_codec not in saved_video_codec_values:
+                    saved_video_codec = "libx264"
+                selected_codec_index = saved_video_codec_values.index(saved_video_codec)
+                selected_codec_index = st.selectbox(
+                    tr("Video Encoder"),
+                    options=range(len(video_codec_options)),
+                    index=selected_codec_index,
+                    format_func=lambda x: video_codec_options[x][0],
+                    help=tr("Video Encoder Help"),
+                )
+                config.app["video_codec"] = video_codec_options[selected_codec_index][1]
+        else:
+            # 隐藏高级视频设置时，仍要保证编码器有有效默认值供后端使用。
+            config.app.setdefault("video_codec", "libx264")
     with st.container(border=True):
         st.write(tr("Audio Settings"))
 
@@ -948,6 +997,8 @@ with middle_panel:
             ("gemini-tts", "Google Gemini TTS"),
             ("mimo-tts", "Xiaomi MiMo TTS"),
         ]
+        # TTS 服务器元组是 (value, label)，id 在第 0 位。
+        tts_servers = vis.trim("enabled_tts_servers", tts_servers, id_index=0)
 
         # 获取保存的TTS服务器，默认为v1
         saved_tts_server = config.ui.get("tts_server", "azure-tts-v1")
@@ -1054,6 +1105,7 @@ with middle_panel:
         if (
             friendly_names
             and selected_tts_server != voice.NO_VOICE_NAME
+            and not vis.is_hidden("play_voice")
             and st.button(tr("Play Voice"))
         ):
             play_content = params.video_subject
@@ -1159,68 +1211,83 @@ with middle_panel:
 
             config.app["mimo_api_key"] = mimo_api_key
 
-        params.voice_volume = st.selectbox(
-            tr("Speech Volume"),
-            options=[0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 5.0],
-            index=2,
-        )
+        if not vis.is_hidden("speech_volume"):
+            params.voice_volume = st.selectbox(
+                tr("Speech Volume"),
+                options=[0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 5.0],
+                index=2,
+            )
+        else:
+            params.voice_volume = 1.0
 
-        params.voice_rate = st.selectbox(
-            tr("Speech Rate"),
-            options=[0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.8, 2.0],
-            index=2,
-        )
+        if not vis.is_hidden("speech_rate"):
+            params.voice_rate = st.selectbox(
+                tr("Speech Rate"),
+                options=[0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.8, 2.0],
+                index=2,
+            )
+        else:
+            params.voice_rate = 1.0
 
-        custom_audio_file_types = ["mp3", "wav", "m4a", "aac", "flac", "ogg"]
-        uploaded_audio_file = st.file_uploader(
-            tr("Custom Audio File"),
-            type=custom_audio_file_types
-            + [file_type.upper() for file_type in custom_audio_file_types],
-            accept_multiple_files=False,
-            key="custom_audio_file_uploader",
-        )
-        if uploaded_audio_file:
-            st.audio(uploaded_audio_file, format="audio/mp3")
-            st.info(
-                tr(
-                    "Custom audio will be used directly. TTS synthesis will be skipped for this task."
+        if not vis.is_hidden("custom_audio_file"):
+            custom_audio_file_types = ["mp3", "wav", "m4a", "aac", "flac", "ogg"]
+            uploaded_audio_file = st.file_uploader(
+                tr("Custom Audio File"),
+                type=custom_audio_file_types
+                + [file_type.upper() for file_type in custom_audio_file_types],
+                accept_multiple_files=False,
+                key="custom_audio_file_uploader",
+            )
+            if uploaded_audio_file:
+                st.audio(uploaded_audio_file, format="audio/mp3")
+                st.info(
+                    tr(
+                        "Custom audio will be used directly. TTS synthesis will be skipped for this task."
+                    )
                 )
-            )
+        else:
+            uploaded_audio_file = None
 
-        bgm_options = [
-            (tr("No Background Music"), ""),
-            (tr("Random Background Music"), "random"),
-            (tr("Custom Background Music"), "custom"),
-        ]
-        selected_index = st.selectbox(
-            tr("Background Music"),
-            index=1,
-            options=range(
-                len(bgm_options)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: bgm_options[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        # Get the selected background music type
-        params.bgm_type = bgm_options[selected_index][1]
-
-        # Show or hide components based on the selection
-        if params.bgm_type == "custom":
-            custom_bgm_file = st.text_input(
-                tr("Custom Background Music File"), key="custom_bgm_file_input"
+        if not vis.is_hidden("background_music"):
+            bgm_options = [
+                (tr("No Background Music"), ""),
+                (tr("Random Background Music"), "random"),
+                (tr("Custom Background Music"), "custom"),
+            ]
+            bgm_options = vis.trim("enabled_bgm_types", bgm_options, id_index=1)
+            selected_index = st.selectbox(
+                tr("Background Music"),
+                index=vis.resolve_index(bgm_options, "random", "random", id_index=1),
+                options=range(
+                    len(bgm_options)
+                ),  # Use the index as the internal option value
+                format_func=lambda x: bgm_options[x][
+                    0
+                ],  # The label is displayed to the user
             )
-            if custom_bgm_file:
-                # 这里不直接用 os.path.exists 判断，因为用户常见输入是
-                # output000.mp3，这个文件名需要由服务层映射到 resource/songs
-                # 目录后再校验。服务层会统一限制目录和文件类型，避免任意路径读取。
-                params.bgm_file = custom_bgm_file.strip()
-                # st.write(f":red[已选择自定义背景音乐]：**{custom_bgm_file}**")
-        params.bgm_volume = st.selectbox(
-            tr("Background Music Volume"),
-            options=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-            index=2,
-        )
+            # Get the selected background music type
+            params.bgm_type = bgm_options[selected_index][1]
+
+            # Show or hide components based on the selection
+            if params.bgm_type == "custom":
+                custom_bgm_file = st.text_input(
+                    tr("Custom Background Music File"), key="custom_bgm_file_input"
+                )
+                if custom_bgm_file:
+                    # 这里不直接用 os.path.exists 判断，因为用户常见输入是
+                    # output000.mp3，这个文件名需要由服务层映射到 resource/songs
+                    # 目录后再校验。服务层会统一限制目录和文件类型，避免任意路径读取。
+                    params.bgm_file = custom_bgm_file.strip()
+                    # st.write(f":red[已选择自定义背景音乐]：**{custom_bgm_file}**")
+            params.bgm_volume = st.selectbox(
+                tr("Background Music Volume"),
+                options=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+                index=2,
+            )
+        else:
+            params.bgm_type = "random"
+            params.bgm_file = ""
+            params.bgm_volume = 0.2
 
 with right_panel:
     with st.container(border=True):
@@ -1242,12 +1309,14 @@ with right_panel:
             (tr("Bottom"), "bottom"),
             (tr("Custom"), "custom"),
         ]
+        subtitle_positions = vis.trim(
+            "enabled_subtitle_positions", subtitle_positions, id_index=1
+        )
         saved_subtitle_position = config.ui.get("subtitle_position", "bottom")
-        saved_position_index = 2
-        for i, (_, pos_value) in enumerate(subtitle_positions):
-            if pos_value == saved_subtitle_position:
-                saved_position_index = i
-                break
+        # resolve_index 兜底：保存位置被精简掉时回退到第一个可见项，避免 index 越界。
+        saved_position_index = vis.resolve_index(
+            subtitle_positions, saved_subtitle_position, "bottom", id_index=1
+        )
         selected_index = st.selectbox(
             tr("Position"),
             index=saved_position_index,
@@ -1286,75 +1355,106 @@ with right_panel:
             params.font_size = st.slider(tr("Font Size"), 30, 100, saved_font_size)
             config.ui["font_size"] = params.font_size
 
-        stroke_cols = st.columns([0.3, 0.7])
-        with stroke_cols[0]:
-            params.stroke_color = st.color_picker(tr("Stroke Color"), "#000000")
-        with stroke_cols[1]:
-            params.stroke_width = st.slider(tr("Stroke Width"), 0.0, 10.0, 1.5)
+        if not vis.is_hidden("subtitle_stroke"):
+            stroke_cols = st.columns([0.3, 0.7])
+            with stroke_cols[0]:
+                params.stroke_color = st.color_picker(tr("Stroke Color"), "#000000")
+            with stroke_cols[1]:
+                params.stroke_width = st.slider(tr("Stroke Width"), 0.0, 10.0, 1.5)
+        else:
+            params.stroke_color = "#000000"
+            params.stroke_width = 1.5
 
-        subtitle_bg_cols = st.columns([0.4, 0.6])
-        saved_subtitle_background_enabled = config.ui.get(
-            "subtitle_background_enabled", True
-        )
-        with subtitle_bg_cols[0]:
-            subtitle_background_enabled = st.checkbox(
-                tr("Enable Subtitle Background"),
-                value=saved_subtitle_background_enabled,
+        if not vis.is_hidden("subtitle_background"):
+            subtitle_bg_cols = st.columns([0.4, 0.6])
+            saved_subtitle_background_enabled = config.ui.get(
+                "subtitle_background_enabled", True
             )
-        config.ui["subtitle_background_enabled"] = subtitle_background_enabled
-        if subtitle_background_enabled:
-            with subtitle_bg_cols[1]:
-                saved_subtitle_background_color = config.ui.get(
+            with subtitle_bg_cols[0]:
+                subtitle_background_enabled = st.checkbox(
+                    tr("Enable Subtitle Background"),
+                    value=saved_subtitle_background_enabled,
+                )
+            config.ui["subtitle_background_enabled"] = subtitle_background_enabled
+            if subtitle_background_enabled:
+                with subtitle_bg_cols[1]:
+                    saved_subtitle_background_color = config.ui.get(
+                        "subtitle_background_color", "#000000"
+                    )
+                    params.text_background_color = st.color_picker(
+                        tr("Subtitle Background Color"),
+                        saved_subtitle_background_color,
+                    )
+                    config.ui["subtitle_background_color"] = params.text_background_color
+            else:
+                params.text_background_color = False
+        else:
+            # 隐藏背景控件时沿用已保存配置，并保留 subtitle_background_enabled 供下方圆角控件使用。
+            subtitle_background_enabled = config.ui.get("subtitle_background_enabled", True)
+            if subtitle_background_enabled:
+                params.text_background_color = config.ui.get(
                     "subtitle_background_color", "#000000"
                 )
-                params.text_background_color = st.color_picker(
-                    tr("Subtitle Background Color"),
-                    saved_subtitle_background_color,
-                )
-                config.ui["subtitle_background_color"] = params.text_background_color
-        else:
-            params.text_background_color = False
+            else:
+                params.text_background_color = False
 
-        saved_rounded_subtitle_background = config.ui.get(
-            "rounded_subtitle_background", False
-        )
-        # 背景关闭时，圆角背景没有可渲染的底色。这里禁用控件并保留原配置，
-        # 用户下次重新开启字幕背景后，可以继续使用之前保存的圆角偏好。
-        params.rounded_subtitle_background = st.checkbox(
-            tr("Rounded Subtitle Background"),
-            value=(
-                saved_rounded_subtitle_background
+        if not vis.is_hidden("rounded_subtitle_background"):
+            saved_rounded_subtitle_background = config.ui.get(
+                "rounded_subtitle_background", False
+            )
+            # 背景关闭时，圆角背景没有可渲染的底色。这里禁用控件并保留原配置，
+            # 用户下次重新开启字幕背景后，可以继续使用之前保存的圆角偏好。
+            params.rounded_subtitle_background = st.checkbox(
+                tr("Rounded Subtitle Background"),
+                value=(
+                    saved_rounded_subtitle_background
+                    if subtitle_background_enabled
+                    else False
+                ),
+                help=tr("Rounded Subtitle Background Help"),
+                disabled=not subtitle_background_enabled,
+            )
+            if subtitle_background_enabled:
+                config.ui["rounded_subtitle_background"] = (
+                    params.rounded_subtitle_background
+                )
+        else:
+            params.rounded_subtitle_background = (
+                config.ui.get("rounded_subtitle_background", False)
                 if subtitle_background_enabled
                 else False
-            ),
-            help=tr("Rounded Subtitle Background Help"),
-            disabled=not subtitle_background_enabled,
-        )
-        if subtitle_background_enabled:
-            config.ui["rounded_subtitle_background"] = (
-                params.rounded_subtitle_background
             )
 
         # 卡拉OK逐字高亮：朗读到的词变色并放大。
-        highlight_cols = st.columns([0.4, 0.6])
-        saved_highlight_enabled = config.ui.get("subtitle_highlight_enabled", False)
-        with highlight_cols[0]:
-            params.subtitle_highlight_enabled = st.checkbox(
-                tr("Enable Karaoke Highlight"),
-                value=saved_highlight_enabled,
-                help=tr("Enable Karaoke Highlight Help"),
+        if not vis.is_hidden("karaoke_highlight"):
+            highlight_cols = st.columns([0.4, 0.6])
+            saved_highlight_enabled = config.ui.get("subtitle_highlight_enabled", False)
+            with highlight_cols[0]:
+                params.subtitle_highlight_enabled = st.checkbox(
+                    tr("Enable Karaoke Highlight"),
+                    value=saved_highlight_enabled,
+                    help=tr("Enable Karaoke Highlight Help"),
+                )
+            config.ui["subtitle_highlight_enabled"] = params.subtitle_highlight_enabled
+            if params.subtitle_highlight_enabled:
+                with highlight_cols[1]:
+                    saved_highlight_color = config.ui.get(
+                        "subtitle_highlight_color", "#FFFF00"
+                    )
+                    params.subtitle_highlight_color = st.color_picker(
+                        tr("Karaoke Highlight Color"), saved_highlight_color
+                    )
+                    config.ui["subtitle_highlight_color"] = params.subtitle_highlight_color
+        else:
+            params.subtitle_highlight_enabled = config.ui.get(
+                "subtitle_highlight_enabled", False
             )
-        config.ui["subtitle_highlight_enabled"] = params.subtitle_highlight_enabled
-        if params.subtitle_highlight_enabled:
-            with highlight_cols[1]:
-                saved_highlight_color = config.ui.get(
-                    "subtitle_highlight_color", "#FFFF00"
-                )
-                params.subtitle_highlight_color = st.color_picker(
-                    tr("Karaoke Highlight Color"), saved_highlight_color
-                )
-                config.ui["subtitle_highlight_color"] = params.subtitle_highlight_color
-    with st.expander(tr("Click to show API Key management"), expanded=False):
+            params.subtitle_highlight_color = config.ui.get(
+                "subtitle_highlight_color", "#FFFF00"
+            )
+    # api_key_management 可隐藏：with 缩进 6 空格挂到 if 下，整段函数体保持原缩进，无需重排。
+    if not vis.is_hidden("api_key_management"):
+      with st.expander(tr("Click to show API Key management"), expanded=False):
         st.subheader(tr("Manage Pexels and Pixabay API Keys"))
 
         col1, col2 = st.tabs([tr("Pexels API Keys"), tr("Pixabay API Keys")])
@@ -1418,7 +1518,9 @@ with right_panel:
                     config.save_config()
                     st.success(tr("Pixabay API Key deleted successfully"))
 
-    with st.expander(tr("YouTube Upload Settings"), expanded=False):
+    # youtube_upload 可隐藏：同上，with 缩进 6 空格挂到 if 下，函数体保持原缩进。
+    if not vis.is_hidden("youtube_upload"):
+      with st.expander(tr("YouTube Upload Settings"), expanded=False):
         st.caption(tr("YouTube Upload Help"))
         config.app["youtube_enabled"] = st.checkbox(
             tr("Enable YouTube Upload"), value=config.app.get("youtube_enabled", False)
