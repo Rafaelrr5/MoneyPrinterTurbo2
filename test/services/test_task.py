@@ -75,6 +75,38 @@ class TestTaskService(unittest.TestCase):
         # generate_video 的输出文件就是返回值
         self.assertEqual(gen.call_args.kwargs["output_file"], preview)
 
+    def test_finalize_from_materials_returns_videos(self):
+        """收尾阶段（拼接渲染 + 跨平台发布）独立可调用，返回 videos 列表。"""
+        params = VideoParams(
+            video_subject="x",
+            video_aspect="9:16",
+            video_concat_mode="random",
+            video_transition_mode="None",
+            video_clip_duration=3,
+            video_count=1,
+            n_threads=2,
+        )
+        with patch.object(
+            tm, "generate_final_videos",
+            return_value=(["/t/final-1.mp4"], ["/t/combined-1.mp4"]),
+        ) as final, \
+             patch.object(tm.upload_post.upload_post_service, "is_configured", return_value=False), \
+             patch.object(tm.youtube_upload.youtube_upload_service, "is_configured", return_value=False):
+            result = tm.finalize_from_materials(
+                task_id="finalize-task",
+                params=params,
+                downloaded_videos=["/v/1.mp4"],
+                audio_file="/a/audio.mp3",
+                subtitle_path="/a/subtitle.srt",
+                video_script="script text",
+                video_terms=["t1"],
+                audio_duration=12,
+            )
+
+        final.assert_called_once()
+        self.assertEqual(result["videos"], ["/t/final-1.mp4"])
+        self.assertEqual(result["combined_videos"], ["/t/combined-1.mp4"])
+
     def test_task_local_materials(self):
         task_id = "00000000-0000-0000-0000-000000000000"
         video_materials=[]

@@ -279,6 +279,102 @@ def generate_preview(
     return preview_path
 
 
+def finalize_from_materials(
+    task_id, params, downloaded_videos, audio_file, subtitle_path,
+    video_script, video_terms, audio_duration,
+):
+    """成片收尾：拼接渲染 -> 可选跨平台发布 -> YouTube 上传，返回结果 kwargs。
+    start() 全流程与 WebUI 预览通过后都复用这里，避免逻辑重复。"""
+    # 仅完整视频生成流程才需要处理视频拼接模式；
+    # 这样可以避免 /subtitle 和 /audio 这类请求访问不存在的字段。
+    if type(params.video_concat_mode) is str:
+        params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
+
+    # 6. Generate final videos
+    final_video_paths, combined_video_paths = generate_final_videos(
+        task_id, params, downloaded_videos, audio_file, subtitle_path
+    )
+
+    if not final_video_paths:
+        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+        return
+
+    logger.success(
+        f"task {task_id} finished, generated {len(final_video_paths)} videos."
+    )
+
+    # 7. Cross-post to TikTok/Instagram (if enabled)
+    cross_post_results = []
+    if upload_post.upload_post_service.is_configured() and upload_post.upload_post_service.auto_upload:
+        logger.info("\n\n## cross-posting videos to TikTok/Instagram")
+        for video_path in final_video_paths:
+            result = upload_post.cross_post_video(
+                video_path=video_path,
+                title=params.video_subject or "Check out this video! #shorts #viral"
+            )
+            cross_post_results.append(result)
+            if result.get('success'):
+                logger.info(f"✅ Cross-posted: {video_path}")
+            else:
+                logger.warning(f"⚠️ Failed to cross-post: {video_path} - {result.get('error', 'Unknown error')}")
+
+    # 8. Upload to YouTube via the official Data API v3 (if enabled)
+    youtube_results = []
+    if (
+        youtube_upload.youtube_upload_service.is_configured()
+        and youtube_upload.youtube_upload_service.auto_upload
+    ):
+        logger.info("\n\n## uploading videos to YouTube")
+        for index, video_path in enumerate(final_video_paths):
+            # 复用现有社媒文案能力，按 YouTube Shorts 规格产出 title/描述/标签。
+            meta = llm.generate_social_metadata(
+                video_subject=params.video_subject,
+                video_script=video_script,
+                language=params.video_language,
+                platform="youtube_shorts",
+            )
+            hashtags = meta.get("hashtags", [])
+            caption = meta.get("caption", "")
+            description = (
+                f"{caption}\n\n{' '.join(hashtags)}".strip() if hashtags else caption
+            )
+            thumbnail_path = path.join(
+                utils.task_dir(task_id), f"thumbnail-{index + 1}.jpg"
+            )
+            thumbnail = video.extract_thumbnail(video_path, thumbnail_path)
+            result = youtube_upload.youtube_upload_service.upload_video(
+                video_path=video_path,
+                title=meta.get("title") or params.video_subject or "Untitled",
+                description=description,
+                tags=hashtags,
+                thumbnail_path=thumbnail,
+            )
+            youtube_results.append(result)
+            if result.get("success"):
+                logger.success(f"✅ Uploaded to YouTube: {result.get('url')}")
+            else:
+                logger.warning(
+                    f"⚠️ Failed to upload to YouTube: {video_path} - {result.get('error', 'Unknown error')}"
+                )
+
+    kwargs = {
+        "videos": final_video_paths,
+        "combined_videos": combined_video_paths,
+        "script": video_script,
+        "terms": video_terms,
+        "audio_file": audio_file,
+        "audio_duration": audio_duration,
+        "subtitle_path": subtitle_path,
+        "materials": downloaded_videos,
+        "cross_post_results": cross_post_results if cross_post_results else None,
+        "youtube_results": youtube_results if youtube_results else None,
+    }
+    sm.state.update_task(
+        task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
+    )
+    return kwargs
+
+
 def start(task_id, params: VideoParams, stop_at: str = "video"):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
@@ -369,94 +465,11 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=50)
 
-    # 仅完整视频生成流程才需要处理视频拼接模式；
-    # 这样可以避免 /subtitle 和 /audio 这类请求访问不存在的字段。
-    if type(params.video_concat_mode) is str:
-        params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
-
-    # 6. Generate final videos
-    final_video_paths, combined_video_paths = generate_final_videos(
-        task_id, params, downloaded_videos, audio_file, subtitle_path
+    # 6-8. Render + cross-post + upload (shared with WebUI preview-approval path)
+    return finalize_from_materials(
+        task_id, params, downloaded_videos, audio_file, subtitle_path,
+        video_script, video_terms, audio_duration,
     )
-
-    if not final_video_paths:
-        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-        return
-
-    logger.success(
-        f"task {task_id} finished, generated {len(final_video_paths)} videos."
-    )
-
-    # 7. Cross-post to TikTok/Instagram (if enabled)
-    cross_post_results = []
-    if upload_post.upload_post_service.is_configured() and upload_post.upload_post_service.auto_upload:
-        logger.info("\n\n## cross-posting videos to TikTok/Instagram")
-        for video_path in final_video_paths:
-            result = upload_post.cross_post_video(
-                video_path=video_path,
-                title=params.video_subject or "Check out this video! #shorts #viral"
-            )
-            cross_post_results.append(result)
-            if result.get('success'):
-                logger.info(f"✅ Cross-posted: {video_path}")
-            else:
-                logger.warning(f"⚠️ Failed to cross-post: {video_path} - {result.get('error', 'Unknown error')}")
-
-    # 8. Upload to YouTube via the official Data API v3 (if enabled)
-    youtube_results = []
-    if (
-        youtube_upload.youtube_upload_service.is_configured()
-        and youtube_upload.youtube_upload_service.auto_upload
-    ):
-        logger.info("\n\n## uploading videos to YouTube")
-        for index, video_path in enumerate(final_video_paths):
-            # 复用现有社媒文案能力，按 YouTube Shorts 规格产出 title/描述/标签。
-            meta = llm.generate_social_metadata(
-                video_subject=params.video_subject,
-                video_script=video_script,
-                language=params.video_language,
-                platform="youtube_shorts",
-            )
-            hashtags = meta.get("hashtags", [])
-            caption = meta.get("caption", "")
-            description = (
-                f"{caption}\n\n{' '.join(hashtags)}".strip() if hashtags else caption
-            )
-            thumbnail_path = path.join(
-                utils.task_dir(task_id), f"thumbnail-{index + 1}.jpg"
-            )
-            thumbnail = video.extract_thumbnail(video_path, thumbnail_path)
-            result = youtube_upload.youtube_upload_service.upload_video(
-                video_path=video_path,
-                title=meta.get("title") or params.video_subject or "Untitled",
-                description=description,
-                tags=hashtags,
-                thumbnail_path=thumbnail,
-            )
-            youtube_results.append(result)
-            if result.get("success"):
-                logger.success(f"✅ Uploaded to YouTube: {result.get('url')}")
-            else:
-                logger.warning(
-                    f"⚠️ Failed to upload to YouTube: {video_path} - {result.get('error', 'Unknown error')}"
-                )
-
-    kwargs = {
-        "videos": final_video_paths,
-        "combined_videos": combined_video_paths,
-        "script": video_script,
-        "terms": video_terms,
-        "audio_file": audio_file,
-        "audio_duration": audio_duration,
-        "subtitle_path": subtitle_path,
-        "materials": downloaded_videos,
-        "cross_post_results": cross_post_results if cross_post_results else None,
-        "youtube_results": youtube_results if youtube_results else None,
-    }
-    sm.state.update_task(
-        task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
-    )
-    return kwargs
 
 
 if __name__ == "__main__":
