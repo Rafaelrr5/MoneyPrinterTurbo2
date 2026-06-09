@@ -6,6 +6,8 @@ from app.models.schema import (
     VideoScriptResponse,
     VideoSocialMetadataRequest,
     VideoSocialMetadataResponse,
+    VideoSubsequentThemesRequest,
+    VideoSubsequentThemesResponse,
     VideoTermsRequest,
     VideoTermsResponse,
 )
@@ -64,3 +66,20 @@ def generate_video_social_metadata(
         platform=body.platform,
     )
     return utils.get_response(200, metadata)
+
+
+@router.post(
+    "/subsequent-themes",
+    response_model=VideoSubsequentThemesResponse,
+    summary="Generate related themes for follow-up videos",
+)
+def generate_video_subsequent_themes(
+    request: Request, body: VideoSubsequentThemesRequest
+):
+    themes = llm.generate_subsequent_themes(
+        video_subject=body.video_subject,
+        video_script=body.video_script,
+        amount=body.amount,
+        language=body.language,
+    )
+    return utils.get_response(200, {"themes": themes})

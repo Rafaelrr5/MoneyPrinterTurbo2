@@ -1046,6 +1046,170 @@ def generate_social_metadata(
     return _fallback_social_metadata(video_subject, video_script, platform)
 
 
+# =============================================================================
+# Subsequent themes
+#
+# 根据当前视频主题和脚本，生成"下一批可以拍的相关主题"，帮助创作者规划系列内容。
+# 每条建议包含 theme（下一个视频主题）和 hook（为什么值得拍的一句话角度）。
+# 这块能力只复用现有 LLM provider，不接入任何外部服务，也不写入任务目录，
+# 失败时返回空列表，避免用启发式编造低质量选题误导用户。
+# =============================================================================
+
+DEFAULT_SUBSEQUENT_THEME_COUNT = 5
+MIN_SUBSEQUENT_THEME_COUNT = 1
+MAX_SUBSEQUENT_THEME_COUNT = 10
+# 单条 theme/hook 的长度上限。建议只用于展示和后续二次创作，过长内容没有意义。
+MAX_SUBSEQUENT_THEME_TEXT = 120
+
+
+def _normalize_theme_count(amount) -> int:
+    try:
+        value = int(amount if amount is not None else DEFAULT_SUBSEQUENT_THEME_COUNT)
+    except (TypeError, ValueError):
+        value = DEFAULT_SUBSEQUENT_THEME_COUNT
+
+    if value < MIN_SUBSEQUENT_THEME_COUNT or value > MAX_SUBSEQUENT_THEME_COUNT:
+        # WebUI 和 API 都会限制范围；这里兜底内部调用，避免异常数量放大 LLM 成本。
+        logger.warning(
+            f"subsequent theme amount is out of range and will be clamped: {value}"
+        )
+        return max(
+            MIN_SUBSEQUENT_THEME_COUNT, min(value, MAX_SUBSEQUENT_THEME_COUNT)
+        )
+
+    return value
+
+
+def build_subsequent_themes_prompt(
+    video_subject: str,
+    video_script: str = "",
+    amount: int = DEFAULT_SUBSEQUENT_THEME_COUNT,
+    language: str = DEFAULT_SOCIAL_LANGUAGE,
+) -> str:
+    video_subject = _limit_social_text(
+        video_subject, MAX_SOCIAL_SUBJECT_LENGTH, "video_subject"
+    )
+    video_script = _limit_social_text(
+        video_script, MAX_SOCIAL_SCRIPT_LENGTH, "video_script"
+    )
+    amount = _normalize_theme_count(amount)
+    language_instruction = _social_language_instruction(language)
+
+    prompt = f"""
+# Role: Short-Video Content Strategist
+
+## Goal
+Given a video that was just created, propose the next videos a creator should make.
+Each suggestion is a follow-up theme that keeps the same audience engaged.
+
+## Constraints
+1. Respond ONLY with a single valid minified JSON array. No markdown, no code fences, no commentary.
+2. The array must contain exactly {amount} objects.
+3. Each object must contain exactly these keys: "theme", "hook".
+4. "theme": a short next-video topic, related to the current subject but clearly distinct from it. Do not repeat the current subject.
+5. "hook": a single short sentence explaining why this is a strong next video.
+6. {language_instruction}
+
+## Output Example
+[{{"theme":"...","hook":"..."}},{{"theme":"...","hook":"..."}}]
+
+## Context
+### Current Video Subject
+{video_subject}
+
+### Current Video Script
+{video_script}
+""".strip()
+    return prompt
+
+
+def _parse_subsequent_themes(response: str, amount: int) -> List[dict]:
+    amount = _normalize_theme_count(amount)
+
+    data = None
+    try:
+        data = json.loads(response)
+    except Exception:
+        # 部分模型会在 JSON 数组外层包说明文字或 markdown fence。
+        # 调用方只需要稳定结构，所以这里尝试提取第一个 JSON array。
+        match = re.search(r"\[.*\]", response or "", re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+            except Exception:
+                return []
+
+    if not isinstance(data, list):
+        return []
+
+    themes: List[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        theme = _clamp_text(item.get("theme", ""), MAX_SUBSEQUENT_THEME_TEXT)
+        if not theme:
+            # 没有 theme 的条目无法作为选题展示，直接丢弃。
+            continue
+        hook = _clamp_text(item.get("hook", ""), MAX_SUBSEQUENT_THEME_TEXT)
+        themes.append({"theme": theme, "hook": hook})
+        if len(themes) >= amount:
+            break
+
+    return themes
+
+
+def generate_subsequent_themes(
+    video_subject: str,
+    video_script: str = "",
+    amount: int = DEFAULT_SUBSEQUENT_THEME_COUNT,
+    language: str = DEFAULT_SOCIAL_LANGUAGE,
+) -> List[dict]:
+    """
+    生成"下一批可以拍的相关主题"。
+
+    返回结构固定为 `[{"theme": str, "hook": str}, ...]`。如果 LLM 不可用或返回
+    格式异常，返回空列表，由 WebUI/API 调用方决定如何提示，不编造启发式选题。
+    """
+    amount = _normalize_theme_count(amount)
+    language = _normalize_social_language(language)
+    video_subject = _limit_social_text(
+        video_subject, MAX_SOCIAL_SUBJECT_LENGTH, "video_subject"
+    )
+    video_script = _limit_social_text(
+        video_script, MAX_SOCIAL_SCRIPT_LENGTH, "video_script"
+    )
+    prompt = build_subsequent_themes_prompt(
+        video_subject=video_subject,
+        video_script=video_script,
+        amount=amount,
+        language=language,
+    )
+    logger.info(f"generating subsequent themes: amount={amount}, language={language}")
+
+    response = ""
+    for i in range(_max_retries):
+        try:
+            response = _generate_response(prompt)
+            if isinstance(response, str) and "Error: " in response:
+                logger.error(f"failed to generate subsequent themes: {response}")
+                break
+            themes = _parse_subsequent_themes(response, amount)
+            if themes:
+                logger.success(f"completed: \n{themes}")
+                return themes
+            logger.warning("subsequent themes response parsed to empty list")
+        except Exception as e:
+            logger.warning(f"failed to parse subsequent themes: {str(e)}")
+
+        if i < _max_retries - 1:
+            logger.warning(
+                f"failed to generate subsequent themes, trying again... {i + 1}"
+            )
+
+    logger.warning("returning empty subsequent themes")
+    return []
+
+
 if __name__ == "__main__":
     video_subject = "生命的意义是什么"
     script = generate_script(

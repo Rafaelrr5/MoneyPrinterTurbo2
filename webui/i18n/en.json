@@ -166,6 +166,10 @@
     "YouTube Made For Kids": "Mark videos as Made for Kids",
     "YouTube Auto Upload": "Automatically upload after video generation",
     "Save YouTube Settings": "Save YouTube Settings",
-    "YouTube Settings Saved": "YouTube settings saved successfully"
+    "YouTube Settings Saved": "YouTube settings saved successfully",
+    "Subsequent Themes": "Subsequent Themes (:blue[AI suggests related topics for your next videos])",
+    "Generate Subsequent Themes": "Click to use AI to suggest [Subsequent Themes] for your next videos",
+    "Generating Subsequent Themes": "AI is generating subsequent themes...",
+    "No Subsequent Themes Generated": "No subsequent themes generated. Please try again."
   }
 }

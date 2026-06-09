@@ -67,6 +67,9 @@ if "video_terms" not in st.session_state:
     st.session_state["video_terms"] = ""
 if "video_script_prompt" not in st.session_state:
     st.session_state["video_script_prompt"] = ""
+if "subsequent_themes" not in st.session_state:
+    # AI 生成的"下一批可拍主题"建议，仅用于展示，不参与视频生成。
+    st.session_state["subsequent_themes"] = []
 if "custom_system_prompt" not in st.session_state:
     st.session_state["custom_system_prompt"] = llm.DEFAULT_SCRIPT_SYSTEM_PROMPT
 if "use_custom_system_prompt" not in st.session_state:
@@ -789,6 +792,31 @@ with left_panel:
         params.video_terms = st.text_area(
             tr("Video Keywords"), value=st.session_state["video_terms"]
         )
+
+        # AI 根据当前主题/脚本推荐"下一批可以拍的相关主题"，帮助规划系列内容。
+        # 仅作为创作建议展示，不参与本次视频生成。
+        st.write(tr("Subsequent Themes"))
+        if st.button(
+            tr("Generate Subsequent Themes"), key="auto_generate_subsequent_themes"
+        ):
+            if not params.video_subject:
+                st.error(tr("Please Enter the Video Subject"))
+                st.stop()
+
+            with st.spinner(tr("Generating Subsequent Themes")):
+                themes = llm.generate_subsequent_themes(
+                    video_subject=params.video_subject,
+                    video_script=params.video_script,
+                    language=params.video_language,
+                )
+                st.session_state["subsequent_themes"] = themes
+                if not themes:
+                    st.warning(tr("No Subsequent Themes Generated"))
+
+        for item in st.session_state["subsequent_themes"]:
+            theme = item.get("theme", "")
+            hook = item.get("hook", "")
+            st.markdown(f"- **{theme}**" + (f" — {hook}" if hook else ""))
 
 with middle_panel:
     with st.container(border=True):

@@ -166,6 +166,10 @@
     "YouTube Made For Kids": "Пометить видео как «Для детей»",
     "YouTube Auto Upload": "Автоматически загружать после генерации видео",
     "Save YouTube Settings": "Сохранить настройки YouTube",
-    "YouTube Settings Saved": "Настройки YouTube сохранены"
+    "YouTube Settings Saved": "Настройки YouTube сохранены",
+    "Subsequent Themes": "Последующие темы (:blue[ИИ предложит похожие темы для следующих видео])",
+    "Generate Subsequent Themes": "Нажмите, чтобы ИИ предложил [последующие темы] для ваших следующих видео",
+    "Generating Subsequent Themes": "ИИ генерирует последующие темы...",
+    "No Subsequent Themes Generated": "Последующие темы не сгенерированы. Попробуйте ещё раз."
   }
 }

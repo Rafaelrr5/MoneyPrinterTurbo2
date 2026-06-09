@@ -198,6 +198,22 @@ class VideoSocialMetadataParams:
     platform: Optional[str] = Field(default="tiktok", max_length=64)
 
 
+class VideoSubsequentThemesParams:
+    """
+    {
+      "video_subject": "A day in Shanghai",
+      "video_script": "",
+      "amount": 5,
+      "language": "auto"
+    }
+    """
+
+    video_subject: Optional[str] = Field(default="A day in Shanghai", max_length=500)
+    video_script: Optional[str] = Field(default="", max_length=8000)
+    amount: Optional[int] = Field(default=5, ge=1, le=10)
+    language: Optional[str] = Field(default="auto", max_length=64)
+
+
 class BaseResponse(BaseModel):
     status: int = 200
     message: Optional[str] = "success"
@@ -221,6 +237,10 @@ class VideoTermsRequest(VideoTermsParams, BaseModel):
 
 
 class VideoSocialMetadataRequest(VideoSocialMetadataParams, BaseModel):
+    pass
+
+
+class VideoSubsequentThemesRequest(VideoSubsequentThemesParams, BaseModel):
     pass
 
 
@@ -341,6 +361,28 @@ class VideoSocialMetadataResponse(BaseResponse):
                     "title": "A Day in Shanghai You Should Not Miss",
                     "caption": "Save this quick Shanghai inspiration and follow for more short travel ideas.",
                     "hashtags": ["#shorts", "#travel", "#shanghai", "#viral", "#fyp"],
+                },
+            },
+        }
+
+
+class VideoSubsequentThemesResponse(BaseResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": 200,
+                "message": "success",
+                "data": {
+                    "themes": [
+                        {
+                            "theme": "Hidden food streets in Shanghai",
+                            "hook": "Food spin-offs keep the same audience watching",
+                        },
+                        {
+                            "theme": "A weekend in Suzhou",
+                            "hook": "Nearby city ideas extend the travel series",
+                        },
+                    ]
                 },
             },
         }

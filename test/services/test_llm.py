@@ -11,7 +11,11 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.config import config
-from app.models.schema import VideoScriptRequest, VideoSocialMetadataRequest
+from app.models.schema import (
+    VideoScriptRequest,
+    VideoSocialMetadataRequest,
+    VideoSubsequentThemesRequest,
+)
 from app.services import llm
 
 
@@ -829,6 +833,173 @@ class TestSocialMetadata(unittest.TestCase):
                     "title": "3 Quiet Tokyo Coffee Shops",
                     "caption": "Save these spots for your next Tokyo morning.",
                     "hashtags": ["#Tokyo", "#Coffee", "#Shorts"],
+                },
+            },
+        )
+
+
+class TestSubsequentThemes(unittest.TestCase):
+    """根据当前视频主题生成下一批可拍主题（theme + hook）。"""
+
+    def test_build_prompt_includes_subject_script_and_count(self):
+        prompt = llm.build_subsequent_themes_prompt(
+            video_subject="上海一日游",
+            video_script="今天带你快速看完上海经典路线。",
+            amount=4,
+            language="auto",
+        )
+
+        self.assertIn("上海一日游", prompt)
+        self.assertIn("今天带你快速看完上海经典路线。", prompt)
+        self.assertIn("exactly 4 objects", prompt)
+        self.assertIn("Use the same language as the video subject", prompt)
+
+    def test_build_prompt_accepts_explicit_language(self):
+        prompt = llm.build_subsequent_themes_prompt(
+            video_subject="Coffee tips",
+            language="en-US",
+        )
+
+        self.assertIn('in this language: en-US', prompt)
+
+    def test_build_prompt_clamps_inputs(self):
+        prompt = llm.build_subsequent_themes_prompt(
+            video_subject="x" * 600,
+            video_script="y" * 9000,
+        )
+
+        self.assertIn("x" * llm.MAX_SOCIAL_SUBJECT_LENGTH, prompt)
+        self.assertNotIn("x" * (llm.MAX_SOCIAL_SUBJECT_LENGTH + 1), prompt)
+        self.assertIn("y" * llm.MAX_SOCIAL_SCRIPT_LENGTH, prompt)
+        self.assertNotIn("y" * (llm.MAX_SOCIAL_SCRIPT_LENGTH + 1), prompt)
+
+    def test_parse_valid_json_array_of_objects(self):
+        raw = (
+            '[{"theme":"Latte art basics","hook":"Beginners love a quick win"},'
+            '{"theme":"Cheap grinders","hook":"Budget gear always trends"}]'
+        )
+        result = llm._parse_subsequent_themes(raw, 5)
+
+        self.assertEqual(
+            result,
+            [
+                {"theme": "Latte art basics", "hook": "Beginners love a quick win"},
+                {"theme": "Cheap grinders", "hook": "Budget gear always trends"},
+            ],
+        )
+
+    def test_parse_recovers_embedded_json_array(self):
+        raw = (
+            "Sure! Here are ideas:\n```json\n"
+            '[{"theme":"Cold brew","hook":"Summer staple"}]\n```\nEnjoy'
+        )
+        result = llm._parse_subsequent_themes(raw, 5)
+
+        self.assertEqual(result, [{"theme": "Cold brew", "hook": "Summer staple"}])
+
+    def test_parse_drops_items_without_theme_and_caps_count(self):
+        raw = (
+            '[{"theme":"A","hook":"a"},{"hook":"no theme"},'
+            '{"theme":"B","hook":"b"},{"theme":"C","hook":"c"}]'
+        )
+        result = llm._parse_subsequent_themes(raw, 2)
+
+        self.assertEqual(
+            result,
+            [{"theme": "A", "hook": "a"}, {"theme": "B", "hook": "b"}],
+        )
+
+    def test_parse_malformed_response_returns_empty_list(self):
+        self.assertEqual(llm._parse_subsequent_themes("not json at all", 5), [])
+        self.assertEqual(llm._parse_subsequent_themes('{"theme":"x"}', 5), [])
+
+    def test_generate_uses_llm_response(self):
+        payload = '[{"theme":"Pour-over guide","hook":"Natural follow-up"}]'
+        with patch.object(llm, "_generate_response", return_value=payload):
+            result = llm.generate_subsequent_themes(
+                video_subject="Coffee tips",
+                video_script="Save these three coffee tips.",
+            )
+
+        self.assertEqual(
+            result, [{"theme": "Pour-over guide", "hook": "Natural follow-up"}]
+        )
+
+    def test_generate_returns_empty_list_on_llm_error(self):
+        with patch.object(
+            llm, "_generate_response", return_value="Error: api_key is not set"
+        ):
+            result = llm.generate_subsequent_themes(video_subject="Coffee tips")
+
+        self.assertEqual(result, [])
+
+    def test_generate_clamps_requested_amount(self):
+        captured = {}
+
+        def fake(prompt):
+            captured["prompt"] = prompt
+            return '[{"theme":"x","hook":"y"}]'
+
+        with patch.object(llm, "_generate_response", side_effect=fake):
+            llm.generate_subsequent_themes(video_subject="x", amount=99)
+
+        self.assertIn(
+            f"exactly {llm.MAX_SUBSEQUENT_THEME_COUNT} objects",
+            captured["prompt"],
+        )
+
+    def test_request_model_defaults(self):
+        body = VideoSubsequentThemesRequest(video_subject="Test")
+
+        self.assertEqual(body.amount, 5)
+        self.assertEqual(body.language, "auto")
+
+    def test_request_model_rejects_invalid_fields(self):
+        with self.assertRaises(ValidationError):
+            VideoSubsequentThemesRequest(video_subject="x", amount=0)
+
+        with self.assertRaises(ValidationError):
+            VideoSubsequentThemesRequest(video_subject="x", amount=11)
+
+        with self.assertRaises(ValidationError):
+            VideoSubsequentThemesRequest(video_subject="x" * 501)
+
+    def test_endpoint_response_shape(self):
+        from fastapi.testclient import TestClient
+
+        from app.asgi import app
+
+        request_body = {
+            "video_subject": "Tokyo coffee shops",
+            "video_script": "Three quiet coffee shops for your next Tokyo morning.",
+            "amount": 2,
+            "language": "en",
+        }
+        llm_response = (
+            '[{"theme":"Tokyo tea houses","hook":"Same vibe, new niche"},'
+            '{"theme":"Best Tokyo breakfast","hook":"Morning content performs"}]'
+        )
+
+        with patch.object(llm, "_generate_response", return_value=llm_response):
+            response = TestClient(app).post(
+                "/api/v1/subsequent-themes",
+                json=request_body,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "status": 200,
+                "message": "success",
+                "data": {
+                    "themes": [
+                        {"theme": "Tokyo tea houses", "hook": "Same vibe, new niche"},
+                        {
+                            "theme": "Best Tokyo breakfast",
+                            "hook": "Morning content performs",
+                        },
+                    ]
                 },
             },
         )
