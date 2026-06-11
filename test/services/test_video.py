@@ -625,5 +625,29 @@ class TestKaraokeWordTimings(unittest.TestCase):
         self.assertAlmostEqual(result[-1][2], 2.0)
 
 
+class TestTrimAudio(unittest.TestCase):
+    @patch.object(vd, "AudioFileClip")
+    def test_trim_audio_caps_to_requested_duration(self, mock_audio_cls):
+        src = mock_audio_cls.return_value
+        src.duration = 30.0
+        sub = src.subclipped.return_value
+
+        out = vd.trim_audio("/x/audio.mp3", "/x/audio-preview.mp3", 10)
+
+        mock_audio_cls.assert_called_once_with("/x/audio.mp3")
+        src.subclipped.assert_called_once_with(0, 10)
+        sub.write_audiofile.assert_called_once()
+        self.assertEqual(out, "/x/audio-preview.mp3")
+
+    @patch.object(vd, "AudioFileClip")
+    def test_trim_audio_does_not_exceed_source_length(self, mock_audio_cls):
+        src = mock_audio_cls.return_value
+        src.duration = 4.0  # shorter than requested 10s
+
+        vd.trim_audio("/x/audio.mp3", "/x/audio-preview.mp3", 10)
+
+        src.subclipped.assert_called_once_with(0, 4.0)
+
+
 if __name__ == "__main__":
     unittest.main()

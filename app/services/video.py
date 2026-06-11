@@ -452,6 +452,20 @@ def close_clip(clip):
     del clip
     gc.collect()
 
+def trim_audio(audio_file: str, output_file: str, duration: float) -> str:
+    """将旁白音频裁剪为前 duration 秒，用于渲染短预览。
+    combine_videos 依据音频时长决定成片长度，所以裁短音频即可得到短样片。"""
+    audio_clip = AudioFileClip(audio_file)
+    try:
+        end = min(duration, audio_clip.duration)
+        sub_clip = audio_clip.subclipped(0, end)
+        sub_clip.write_audiofile(output_file, logger=None)
+        close_clip(sub_clip)
+    finally:
+        close_clip(audio_clip)
+    return output_file
+
+
 def delete_files(files: List[str] | str):
     if isinstance(files, str):
         files = [files]
