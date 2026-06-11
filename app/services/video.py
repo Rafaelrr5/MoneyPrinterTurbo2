@@ -994,41 +994,15 @@ def _build_karaoke_clips(
     block_h = line_count * line_h + (line_count - 1) * interline
     y0 = (clip_h - block_h) / 2
 
-    # —— 底层：整句常色（含可选背景与描边） ——
-    base_img = Image.new("RGBA", (box_w, clip_h), (0, 0, 0, 0))
-    base_draw = ImageDraw.Draw(base_img)
-    if bg_color:
-        bg_rgb = _hex_to_rgb(bg_color)
-        if rounded_bg:
-            radius = max(8, int(font_size * 0.4))
-            base_draw.rounded_rectangle(
-                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
-                radius=radius,
-                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 140),
-            )
-        else:
-            base_draw.rectangle(
-                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
-                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 255),
-            )
-
-    line_geom = []  # 每个可视行的 (x_start, line_top)
+    # 行排版几何：每个可视行的 (x_start, line_top)，底层逐词与叠层共用同一套坐标。
+    line_geom = []
     for li, line in enumerate(lines):
         line_top = y0 + li * (line_h + interline)
         line_w = font.getlength(line)
         x_start = (box_w - line_w) / 2
         line_geom.append((x_start, line_top))
-        base_draw.text(
-            (x_start, line_top),
-            line,
-            font=font,
-            fill=fore_rgb,
-            stroke_width=stroke_width,
-            stroke_fill=stroke_rgb,
-            anchor="la",
-        )
 
-    # 绝对定位（与静态路径同口径，但需要数值，因为叠层要按词中心摆放）。
+    # 绝对定位（与静态路径同口径，但需要数值，因为逐词层要按词中心摆放）。
     box_left = (video_width - box_w) / 2
     if subtitle_position == "bottom":
         box_top = video_height * 0.95 - clip_h
@@ -1044,17 +1018,35 @@ def _build_karaoke_clips(
         box_top = (video_height - clip_h) / 2
 
     duration = max(0.0, line_end - line_start)
-    base_arr = np.array(base_img)
-    del base_img
-    clips = [
-        ImageClip(base_arr, transparent=True)
-        .with_start(line_start)
-        .with_end(line_end)
-        .with_duration(duration)
-        .with_position((box_left, box_top))
-    ]
+    clips = []
 
-    # —— 叠层：逐词放大高亮 ——
+    # —— 底层背景框：整段时长常驻，与文字解耦（文字改为逐词分时渲染）。 ——
+    if bg_color:
+        bg_img = Image.new("RGBA", (box_w, clip_h), (0, 0, 0, 0))
+        bg_draw = ImageDraw.Draw(bg_img)
+        bg_rgb = _hex_to_rgb(bg_color)
+        if rounded_bg:
+            radius = max(8, int(font_size * 0.4))
+            bg_draw.rounded_rectangle(
+                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
+                radius=radius,
+                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 140),
+            )
+        else:
+            bg_draw.rectangle(
+                [0, 0, max(0, box_w - 1), max(0, clip_h - 1)],
+                fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], 255),
+            )
+        bg_arr = np.array(bg_img)
+        del bg_img
+        clips.append(
+            ImageClip(bg_arr, transparent=True)
+            .with_start(line_start)
+            .with_end(line_end)
+            .with_duration(duration)
+            .with_position((box_left, box_top))
+        )
+
     timings = resolve_word_timings(phrase, line_start, line_end, flat_words)
 
     # 把整行 token 时间轴铺到换行后的可视 token 上（同一套分词，顺序一致）。
@@ -1069,12 +1061,61 @@ def _build_karaoke_clips(
             visual_tokens.append((li, tok, line[:idx]))
             char_cursor = idx + len(tok)
 
+    def _token_clip(tok, cx, cy, t0, t1, render_font, color, asc, desc):
+        """单个词的 ImageClip：居中渲染、按词中心绝对摆放、限定显示时段。"""
+        if t1 <= t0:
+            return None
+        w = render_font.getlength(tok)
+        pad = stroke_width * 2 + 4
+        img_w = max(1, int(w + pad * 2))
+        img_h = max(1, int((asc + desc) + pad * 2))
+        img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+        ImageDraw.Draw(img).text(
+            (img_w / 2, img_h / 2),
+            tok,
+            font=render_font,
+            fill=color,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_rgb,
+            anchor="mm",
+        )
+        arr = np.array(img)
+        del img
+        return (
+            ImageClip(arr, transparent=True)
+            .with_start(t0)
+            .with_end(t1)
+            .with_duration(t1 - t0)
+            .with_position((box_left + cx - img_w / 2, box_top + cy - img_h / 2))
+        )
+
     if len(visual_tokens) != len(timings):
-        # token 与时间轴对不上（极少见，如超长英文词被字符级拆分）：只保留底层，
-        # 不抛异常，保证渲染不中断。
+        # token 与时间轴对不上（极少见，如超长英文词被字符级拆分）：退回整句常色一张图，
+        # 不做高亮、不抛异常，保证渲染不中断。
         logger.warning(
             f"karaoke token/timing mismatch ({len(visual_tokens)} vs {len(timings)}), "
             f"showing base line only: {str(phrase)[:30]}"
+        )
+        img = Image.new("RGBA", (box_w, clip_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        for (x_start, line_top), line in zip(line_geom, lines):
+            draw.text(
+                (x_start, line_top),
+                line,
+                font=font,
+                fill=fore_rgb,
+                stroke_width=stroke_width,
+                stroke_fill=stroke_rgb,
+                anchor="la",
+            )
+        arr = np.array(img)
+        del img
+        clips.append(
+            ImageClip(arr, transparent=True)
+            .with_start(line_start)
+            .with_end(line_end)
+            .with_duration(duration)
+            .with_position((box_left, box_top))
         )
         return clips
 
@@ -1082,41 +1123,39 @@ def _build_karaoke_clips(
     hl_font = ImageFont.truetype(font_path, hl_font_size)
     hl_ascent, hl_descent = hl_font.getmetrics()
 
+    # —— 逐词分时渲染：高亮窗口内只出现放大彩色词，窗口外才出现常色词。 ——
+    # 关键：底层常色词在自身高亮时段被夹断，彻底避免“同一词常色+彩色双显”的重影。
     for (li, tok, prefix), (_t_tok, t_start, t_end) in zip(visual_tokens, timings):
-        if t_start is None or t_end is None or t_end <= t_start:
-            continue
         x_start, line_top = line_geom[li]
         tok_left = x_start + font.getlength(prefix)
         tok_w = font.getlength(tok)
         cx = tok_left + tok_w / 2  # 词中心（字幕框坐标系）
         cy = line_top + line_h / 2
 
-        hl_w = hl_font.getlength(tok)
-        pad = stroke_width * 2 + 4
-        img_w = max(1, int(hl_w + pad * 2))
-        img_h = max(1, int((hl_ascent + hl_descent) + pad * 2))
-        ov = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-        ImageDraw.Draw(ov).text(
-            (img_w / 2, img_h / 2),
-            tok,
-            font=hl_font,
-            fill=highlight_rgb,
-            stroke_width=stroke_width,
-            stroke_fill=stroke_rgb,
-            anchor="mm",
+        if t_start is None or t_end is None or t_end <= t_start:
+            # 无有效词时间：常色词常驻整段，无高亮叠层。
+            c = _token_clip(
+                tok, cx, cy, line_start, line_end, font, fore_rgb, ascent, descent
+            )
+            if c is not None:
+                clips.append(c)
+            continue
+
+        ws = max(line_start, t_start)
+        we = min(line_end, t_end)
+        # 高亮前/后：常色词（夹断高亮窗口）。
+        for seg in (
+            _token_clip(tok, cx, cy, line_start, ws, font, fore_rgb, ascent, descent),
+            _token_clip(tok, cx, cy, we, line_end, font, fore_rgb, ascent, descent),
+        ):
+            if seg is not None:
+                clips.append(seg)
+        # 高亮窗口内：放大彩色词。
+        hl = _token_clip(
+            tok, cx, cy, ws, we, hl_font, highlight_rgb, hl_ascent, hl_descent
         )
-        ov_arr = np.array(ov)
-        del ov
-        # 叠层中心对齐底层词中心 → 绝对左上角。
-        abs_x = box_left + cx - img_w / 2
-        abs_y = box_top + cy - img_h / 2
-        clips.append(
-            ImageClip(ov_arr, transparent=True)
-            .with_start(t_start)
-            .with_end(t_end)
-            .with_duration(t_end - t_start)
-            .with_position((abs_x, abs_y))
-        )
+        if hl is not None:
+            clips.append(hl)
 
     return clips
 
