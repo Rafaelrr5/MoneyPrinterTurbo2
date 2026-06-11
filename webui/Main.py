@@ -1580,6 +1580,17 @@ if "preview_ctx" not in st.session_state:
 
 
 def _attach_log_sink():
+    # Streamlit 每次交互都会重跑脚本，预览门控下还会多次（生成/确认/重生成）挂载日志。
+    # 旧 sink 不清掉会随交互不断累积，每条日志被多个失效容器重复处理；这里用
+    # session_state 记住上一个 sink id，重新挂载前先移除，保证同一时刻只有一个预览 sink。
+    old_sink_id = st.session_state.get("preview_log_sink_id")
+    if old_sink_id is not None:
+        try:
+            logger.remove(old_sink_id)
+        except ValueError:
+            # sink 已被移除（如 init_log 重置过），忽略即可。
+            pass
+
     log_container = st.empty()
     log_records = []
 
@@ -1590,7 +1601,7 @@ def _attach_log_sink():
             log_records.append(msg)
             st.code("\n".join(log_records))
 
-    logger.add(log_received)
+    st.session_state["preview_log_sink_id"] = logger.add(log_received)
 
 
 def _render_final_result(result, task_id):
@@ -1766,6 +1777,7 @@ if st.session_state["preview_stage"] == "awaiting_approval":
         _attach_log_sink()
         st.toast(tr("Generating Video"))
         try:
+            # ctx 即 session_state["preview_ctx"]（同一 dict），就地改 preview_path 即生效。
             ctx["preview_path"] = tm.generate_preview(
                 task_id=ctx["task_id"],
                 params=ctx["params"],
@@ -1773,7 +1785,6 @@ if st.session_state["preview_stage"] == "awaiting_approval":
                 audio_file=ctx["audio_file"],
                 subtitle_path=ctx["subtitle_path"],
             )
-            st.session_state["preview_ctx"] = ctx
         except Exception as e:
             st.error(f'{tr("Video Generation Failed")}: {e}')
             logger.error(f"failed to regenerate preview: {e}")
